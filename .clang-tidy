@@ -1,0 +1,32 @@
+FormatStyle: file
+# Every enabled check gates the build: clang-tidy exits nonzero only on errors, so
+# anything short of '*' here lets findings print in CI without failing it.
+WarningsAsErrors: '*'
+# HeaderFilterRegex matches absolute header paths in clang-tidy diagnostics, so a project-relative
+# anchor excludes every project header. Matching all paths adds no dependency noise: Conan's
+# CMakeConfigDeps targets use -isystem, and clang-tidy suppresses system headers by default.
+HeaderFilterRegex: '.*'
+
+Checks: >
+  boost-*,
+  bugprone-*,
+  google-build-explicit-make-pair,
+  google-explicit-constructor,
+  google-runtime-memset,
+  google-runtime-member-string-references,
+  google-readability-redundant-smartptr-get,
+  misc-*,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  performance-*,
+  readability-*,
+  -readability-identifier-length
+CheckOptions:
+  - key: modernize-loop-convert.NamingStyle
+    value: lower_case
+  - key: readability-simplify-boolean-expr.ChainedConditionalReturn
+    value: '1'
+  - key: readability-simplify-boolean-expr.ChainedConditionalAssignment
+    value: '1'
+
+# vim: sw=2:ft=yaml

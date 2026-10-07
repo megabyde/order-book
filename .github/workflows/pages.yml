@@ -1,0 +1,61 @@
+name: Pages
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: doxygen / ubuntu-latest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Tool pins (CONAN_VERSION, DOXYGEN_VERSION) live in .github/ci.env, shared
+      # across workflows.
+      - name: Load CI env
+        run: cat .github/ci.env >> "$GITHUB_ENV"
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+          cache_packages: true
+      - name: Install Doxygen
+        # shell: bash for pipefail, which --fail below depends on. The default runner shell sets -e
+        # but not pipefail, and there --fail makes things worse rather than better: curl writes
+        # nothing, tar exits 0 on empty input, and the step passes with no Doxygen installed.
+        shell: bash
+        run: |
+          version="${{ env.DOXYGEN_VERSION }}"
+          # --fail so a bad DOXYGEN_VERSION surfaces as curl's 404 rather than tar reporting
+          # "Unrecognized archive format" after saving the error page
+          curl -fsSL "https://github.com/doxygen/doxygen/releases/download/Release_${version//./_}/doxygen-${version}.linux.bin.tar.gz" | tar -xz
+          echo "$PWD/doxygen-${version}/bin" >> "$GITHUB_PATH"
+      - run: make docs
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/docs/html
+
+  deploy:
+    name: deploy / github-pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

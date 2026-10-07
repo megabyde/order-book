@@ -1,0 +1,3 @@
+# Normalize repository line endings to LF on every platform. This prevents Windows checkouts from
+# committing CRLF, which the Linux-only format-check job would otherwise miss.
+* text=auto eol=lf
