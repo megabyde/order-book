@@ -4,12 +4,13 @@ Contributor and coding-agent guide for this repository.
 
 ## Scope
 
-This repository is a template. Every change lands in every project generated from it, so prefer the
-narrower change and leave project-specific decisions to the generated repository.
+This repository replays an exchange event feed into per-ticker order books and prints the best bid
+and offer whenever it changes. It was generated from
+[cpp-boilerplate](https://github.com/megabyde/cpp-boilerplate).
 
 Documentation is split by what it serves:
 
-- `README.md`: the entry point. What the template provides, and how to instantiate it.
+- `README.md`: the entry point. What the program does, and how to build and run it.
 - `docs/development.md`: the workflow reference. Sanitizers, presets, the lock file, formatting and
   linting, coverage, documentation, build policy, and IDE setup.
 - `SECURITY.md`: the vulnerability reporting process.
@@ -47,9 +48,6 @@ The defaults differ from a stock CMake project, and the differences are delibera
   rebuilt. Do not describe either as a process-wide guarantee.
 - Sanitizer and coverage builds omit fortification on purpose. Fortify conflicts with the ASan
   interceptors, and coverage builds run at `-O0` where glibc fortification warns.
-- The template does not replace the system allocator, and the reasons are recorded under
-  [Allocators](docs/development.md#allocators). Adding one is a measured decision for a generated
-  project, not a template change.
 
 ## Dependencies
 
@@ -62,22 +60,11 @@ sanitizer values this project needs. It parses only Conan's documented two-level
 the standard library alone, because PyYAML is not available everywhere it runs. Unrecognized input
 fails the check and expects a manual merge.
 
-## Template Invariants
-
-- The rename utility is the instantiation path, and the template workflow renames the repository in
-  CI, then builds, tests, and runs the result. A change that adds a file carrying the project name,
-  the namespace, an include path, or a GitHub link must teach the rename utility about it in the
-  same change, or that workflow fails.
-- The rename utility uses only the Python standard library. Keep it that way: it runs before any
-  dependency is installed.
-- C++23 is the language floor (`cxx_std_23`), and the CMake floor is stated at the top of
-  `CMakeLists.txt` with the feature that sets it. Raise either only with the reason recorded there.
-
 ## Definition of Done
 
 - `make format && make lint` is clean, and the workflow preset covering the change passes.
 - Coverage stays at the floor. Exclude genuinely unreachable defensive code rather than lowering
   `COVERAGE_FAIL_UNDER`.
 - Documentation changed in the same commit when the change touches presets, make targets, flags,
-  the rename utility, or the dependency set.
-- Commits follow Conventional Commits, and work reaches `main` through a pull request.
+  or the dependency set.
+- Commits follow Conventional Commits, and work reaches `master` through a pull request.

@@ -1,12 +1,12 @@
 # CMake 3.29 is required for CMAKE_LINKER_TYPE, which the Conan toolchain sets when mold or LLD is
-# on PATH. This template also uses workflow presets and CMakePresets schema v6 (3.25),
+# on PATH. The project also uses workflow presets and CMakePresets schema v6 (3.25),
 # COMPILE_WARNING_AS_ERROR (3.24), and cxx_std_23 (3.20).
 cmake_minimum_required(VERSION 3.29)
 
 project(
     order_book
     VERSION 0.1.0
-    DESCRIPTION "C++23 project template with Conan and CMake"
+    DESCRIPTION "Exchange feed order book that prints the best bid and offer"
     LANGUAGES CXX
 )
 

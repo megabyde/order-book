@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-This repository is a template. Security fixes apply to the current `main` branch.
+Security fixes apply to the current `master` branch.
 
 ## Report a vulnerability
 

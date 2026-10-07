@@ -68,12 +68,15 @@ jobs:
       - run: make ${{ matrix.preset }}
       - name: ccache stats
         run: ccache -sv
-      # Install the application to a throwaway prefix and run it, verifying the install() rule.
+      # Install the application to a throwaway prefix and replay the sample feed with it, verifying the
+      # install() rule.
       - name: Verify install (release)
         if: matrix.preset == 'release'
         run: |
           cmake --install build/release --prefix "$RUNNER_TEMP/install"
-          "$RUNNER_TEMP/install/bin/order_book"
+          cmake -DAPP="$RUNNER_TEMP/install/bin/order_book" -DINPUT=tests/data/sample.csv \
+            -DEXPECTED=tests/data/sample.expected -DACTUAL="$RUNNER_TEMP/sample.actual" \
+            -P tests/compare_output.cmake
 
   # Windows has no make; it drives Conan and the CMake presets directly. The Visual
   # Studio generator (selected by conanfile.py on Windows) locates MSVC itself, so no
@@ -97,7 +100,7 @@ jobs:
         shell: cmd
         run: |
           cmake --install build\release --prefix "%RUNNER_TEMP%\install" || exit /b 1
-          "%RUNNER_TEMP%\install\bin\order_book.exe" || exit /b 1
+          cmake -DAPP="%RUNNER_TEMP%\install\bin\order_book.exe" -DINPUT=tests/data/sample.csv -DEXPECTED=tests/data/sample.expected -DACTUAL="%RUNNER_TEMP%\sample.actual" -P tests/compare_output.cmake || exit /b 1
 
   coverage:
     name: coverage / ubuntu-latest / gcc

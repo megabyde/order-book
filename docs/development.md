@@ -137,7 +137,7 @@ make docs
 ```
 
 The build is complete when `build/docs/html/index.html` exists. GitHub Pages runs the same target
-and publishes the result from the `main` branch.
+and publishes the result from the `master` branch.
 
 ## Build policy
 
@@ -169,30 +169,6 @@ Sanitizer and coverage builds omit fortification (they build as Debug, which nev
 where glibc fortification warns. The other hardening flags stay on. Like the warning options,
 hardening covers first-party code only; dependency binaries from the Conan cache are not rebuilt
 with these flags.
-
-### Allocators
-
-This template does not replace the system allocator, and no preset or CMake option selects
-[mimalloc](https://github.com/microsoft/mimalloc), [jemalloc](https://github.com/jemalloc/jemalloc),
-or [tcmalloc](https://github.com/google/tcmalloc). An allocator is chosen against a measured
-allocation profile, which a boilerplate does not have. Three constraints make it more than a
-link-line change here:
-
-- ASan installs its own `malloc`/`free` interceptors. An override linked on top of them either fails
-  to link or leaves the heap diagnostics silently disabled, so the `sanitize` and `sanitize-asan`
-  presets would have to gate the allocator off. UBSan does not replace the allocator, so
-  `sanitize-ubsan` can keep it.
-- The override mechanism is per platform. mimalloc's static override works on Linux; macOS needs
-  runtime interposition through `DYLD_INSERT_LIBRARIES`; Windows needs `mimalloc-redirect.dll`
-  beside the executable, which the `install(TARGETS)` rule does not ship.
-- The override is process-wide, but dependency binaries come from the Conan cache and are not
-  rebuilt. Any measurement has to cover the whole process, not the first-party targets alone.
-
-To add one, follow the path the recipe already uses for optional tools: declare a Conan option in
-[`conanfile.py`](../conanfile.py), add the requirement under `requirements()`, forward the choice to
-CMake through `tc.cache_variables` next to the `ccache` and `mold`/LLD probes in `generate()`, and
-fail configuration when `compiler.sanitizer` is `Address` or `AddressUndefinedBehavior`. Rerun
-`make lock` afterwards.
 
 ## IDE setup
 

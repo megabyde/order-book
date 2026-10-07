@@ -96,7 +96,7 @@ The Conan recipe selects the CMake generator:
 - The Visual Studio generator matching the detected MSVC on Windows (multi-config; locates MSVC
   itself, so no extra tool or `vcvars` environment is needed)
 
-This boilerplate supports Linux, macOS, and Windows.
+The project builds on Linux, macOS, and Windows.
 
 ## Configure, build, and test
 
@@ -157,18 +157,14 @@ cmake --workflow --preset release
 cmake --install build/release --prefix /path/to/prefix
 ```
 
-1. Run the installed binary and verify its version:
+1. From the repository root, run the installed binary on the sample feed:
 
 ```console
-$ /path/to/prefix/bin/order_book
-[2026-06-30 20:46:16.431] [info] order-book 0.1.0 starting
-[2026-06-30 20:46:16.431] [info] field 0: alpha
-[2026-06-30 20:46:16.431] [info] field 1: beta
-[2026-06-30 20:46:16.431] [info] field 2: gamma
-[2026-06-30 20:46:16.431] [info] done
-$ /path/to/prefix/bin/order_book --version
-0.1.0
+$ /path/to/prefix/bin/order_book tests/data/sample.csv
+1,AAA,1000,100,,
+2,AAA,1000,100,1010,50
+3,BBB,,,2000,10
+...
 ```
 
-The install is complete when both installed-binary commands succeed and `--version` prints the
-expected project version.
+The install is complete when the output matches `tests/data/sample.expected`.
