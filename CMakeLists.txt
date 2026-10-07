@@ -148,7 +148,7 @@ endfunction()
 # Non-main code lives in a library so the application and the tests link the same artifact instead
 # of recompiling sources. Include dirs and the language standard are PUBLIC so both consumers
 # inherit them.
-add_library(order_book_lib STATIC src/split.cpp)
+add_library(order_book_lib STATIC src/order_book.cpp src/split.cpp)
 target_include_directories(order_book_lib PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(order_book_lib PUBLIC cxx_std_23)
 enable_project_options(order_book_lib)
@@ -208,33 +208,26 @@ endif()
 if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     include(GoogleTest)
-    add_executable(order_book_test tests/split_test.cpp)
+    add_executable(
+        order_book_test tests/order_book_test.cpp tests/split_test.cpp tests/utils_test.cpp
+    )
     target_link_libraries(order_book_test PRIVATE order_book_lib GTest::gtest_main)
     enable_project_options(order_book_test)
 
     gtest_discover_tests(order_book_test DISCOVERY_MODE PRE_TEST)
 
-    # Smoke tests: exercise the application binary end to end, covering the normal run, the
-    # --version and --help branches, and the error path (unknown argument -> nonzero exit). Together
-    # they cover all of src/main.cpp, including under the sanitizer and coverage presets.
-    add_test(NAME AppTest.RunsToCompletion COMMAND order_book)
-    set_tests_properties(AppTest.RunsToCompletion PROPERTIES PASS_REGULAR_EXPRESSION "done")
+    # End-to-end tests: together they cover all of src/main.cpp, including under the sanitizer and
+    # coverage presets.
+    add_test(NAME AppTest.PrintsUsage COMMAND order_book)
+    set_tests_properties(AppTest.PrintsUsage PROPERTIES PASS_REGULAR_EXPRESSION "Usage: .* FILE")
 
-    add_test(NAME AppTest.PrintsVersion COMMAND order_book --version)
-    set_tests_properties(
-        AppTest.PrintsVersion PROPERTIES PASS_REGULAR_EXPRESSION "${PROJECT_VERSION}"
-    )
-
-    add_test(NAME AppTest.PrintsHelp COMMAND order_book --help)
-    set_tests_properties(AppTest.PrintsHelp PROPERTIES PASS_REGULAR_EXPRESSION "Usage:")
-
-    # PASS_REGULAR_EXPRESSION (not WILL_FAIL): the diagnostic proves the error branch ran and
-    # reported, while an exit-code inversion is also satisfied by a crash. The two properties cannot
-    # combine on one test: the regex verdict replaces the exit-code check, and WILL_FAIL would
-    # invert it into a deterministic failure.
-    add_test(NAME AppTest.RejectsUnknownArgument COMMAND order_book --bogus)
-    set_tests_properties(
-        AppTest.RejectsUnknownArgument PROPERTIES PASS_REGULAR_EXPRESSION
-                                                  "unexpected argument: --bogus"
+    add_test(
+        NAME AppTest.ReplaysSample
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book>
+            -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
+            -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/sample.expected
+            -DACTUAL=${PROJECT_BINARY_DIR}/sample.actual -P
+            ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
     )
 endif()

@@ -1,47 +1,99 @@
-#include <order_book/split.hpp>
-#include <order_book/version.hpp>
+#include <order_book/event.hpp>
+#include <order_book/order.hpp>
+#include <order_book/order_book.hpp>
 
-#include <cstddef>
-#include <cstdio>
-#include <print>
-#include <span>
-#include <string_view>
+#include <cassert>
+#include <cstdint>
+#include <fstream>
+#include <iostream>
+#include <ostream>
+#include <string>
+#include <unordered_map>
+
+using order_book::Event;
+using order_book::OrderBook;
+using order_book::PQ;
 
 namespace {
 
-void run()
+void print(std::ostream& os, uint64_t time, const std::string& ticker, PQ best_ask, PQ best_bid)
 {
-    std::println("order-book {} starting", order_book::version);
-
-    constexpr std::string_view record = "alpha,beta,gamma";
-    std::size_t index = 0;
-    for (const auto field : order_book::split_views(record)) {
-        std::println("field {}: {}", index, field);
-        ++index;
+    os << time << ',' << ticker << ',';
+    if (best_bid.price != 0) {
+        os << best_bid;
     }
-
-    std::println("done");
+    else {
+        os << ',';
+    }
+    os << ',';
+    if (best_ask.price != 0) {
+        os << best_ask;
+    }
+    else {
+        os << ',';
+    }
+    os << '\n';
 }
 
 } // namespace
 
 // NOLINTNEXTLINE(bugprone-exception-escape)
-int main(int argc, char* argv[])
+int main(int argc, const char* argv[])
 {
-    const std::span args(argv, static_cast<std::size_t>(argc));
-    if (args.size() == 1) {
-        run();
+    if (argc != 2) {
+        std::cout << "Usage: " << argv[0] << " FILE\n";
         return 0;
     }
-    const std::string_view arg = args[1];
-    if (args.size() == 2 && arg == "--version") {
-        std::println("{}", order_book::version);
-        return 0;
+
+    std::ifstream input(argv[1]);
+    assert(input.is_open());
+
+    // Order books for each symbol
+    std::unordered_map<std::string, OrderBook> books;
+
+    std::string line;
+    // Skip the header
+    getline(input, line);
+    while (getline(input, line)) {
+        // Skip empty strings
+        if (line.find_last_not_of(" \t\n\v\f\r") == std::string::npos) {
+            continue;
+        }
+
+        // Parse event message
+        Event event(line);
+        // Get the order book for this symbol
+        auto& book = books[event.ticker];
+
+        switch (event.type) {
+        case Event::Type::Buy:
+            book.buy(event.order, event.price, event.shares);
+            break;
+        case Event::Type::Sell:
+            book.sell(event.order, event.price, event.shares);
+            break;
+        case Event::Type::Decrease:
+            book.decrease(event.order, event.shares);
+            break;
+        case Event::Type::Delete:
+            book.remove(event.order);
+            break;
+        case Event::Type::Execute:
+            book.execute(event.order, event.shares);
+            break;
+        case Event::Type::Fill:
+            book.fill(event.order);
+            break;
+        default:
+            // Trades and cross-trades don't affect the order book
+            break;
+        }
+
+        if (book.changed()) {
+            const auto ask_bid = book.best_ask_bid();
+            print(std::cout, event.time, event.ticker, ask_bid.first, ask_bid.second);
+        }
     }
-    if (args.size() == 2 && arg == "--help") {
-        std::println("Usage: order_book [--help] [--version]");
-        return 0;
-    }
-    std::println(stderr, "unexpected argument: {}", arg);
-    return 2;
+
+    return 0;
 }
