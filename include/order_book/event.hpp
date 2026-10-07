@@ -14,18 +14,20 @@ namespace order_book {
  * Class parsing a market event from an equity exchange.
  */
 struct Event {
+    /// Message type, encoded as the feed's type letter
     enum struct Type : char {
-        Buy = 'B',        // Buy order
-        Sell = 'S',       // Sell order
-        Decrease = 'C',   // Decrease the number of shares
-        Delete = 'D',     // Delete the order
-        Execute = 'E',    // Execute shares
-        Fill = 'F',       // Fill the order completely
-        Trade = 'T',      // Trade has occurred
-        CrossTrade = 'X', // Cross trade has occurred
+        Buy = 'B',        ///< Buy order
+        Sell = 'S',       ///< Sell order
+        Decrease = 'C',   ///< Decrease the number of shares
+        Delete = 'D',     ///< Delete the order
+        Execute = 'E',    ///< Execute shares
+        Fill = 'F',       ///< Fill the order completely
+        Trade = 'T',      ///< Trade has occurred
+        CrossTrade = 'X', ///< Cross trade has occurred
     };
 
     Event() = delete;
+    /// Parse one feed line
     explicit Event(const std::string& s)
     {
         auto fields = split(s);
@@ -43,12 +45,12 @@ struct Event {
     }
 
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
-    uint64_t time;      // Milliseconds since the start of the trading day
-    std::string ticker; // Stock symbol
-    std::string order;  // Unique per-order ID
-    Type type;          // Message type
-    uint32_t shares;    // Quantity of shares
-    uint32_t price;     // Order price in 100th of a penny
+    uint64_t time;      ///< Milliseconds since the start of the trading day
+    std::string ticker; ///< Stock symbol
+    std::string order;  ///< Unique per-order ID
+    Type type;          ///< Message type
+    uint32_t shares;    ///< Quantity of shares
+    uint32_t price;     ///< Order price in 100th of a penny
     // NOLINTEND(misc-non-private-member-variables-in-classes)
 };
 

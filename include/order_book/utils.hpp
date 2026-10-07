@@ -21,6 +21,6 @@ inline std::vector<std::string> split(const std::string& record, char delimiter 
     } while (end != std::string::npos);
 
     return fields;
-}
+} // LCOV_EXCL_LINE: GCC attributes the unwinding cleanup of fields to this line
 
 } // namespace order_book
