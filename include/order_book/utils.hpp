@@ -3,15 +3,17 @@
 #include <string>
 #include <vector>
 
+namespace order_book {
+
 /**
  * Utility function to split a string by the delimiter
  */
-inline std::vector<std::string>
-split(const std::string& record, char delimiter = ',')
+inline std::vector<std::string> split(const std::string& record, char delimiter = ',')
 {
     std::vector<std::string> fields;
 
-    size_t begin = 0, end;
+    size_t begin = 0;
+    size_t end;
     do {
         end = record.find_first_of(delimiter, begin);
         fields.push_back(record.substr(begin, end - begin));
@@ -19,4 +21,6 @@ split(const std::string& record, char delimiter = ',')
     } while (end != std::string::npos);
 
     return fields;
-}
+} // LCOV_EXCL_LINE: GCC attributes the unwinding cleanup of fields to this line
+
+} // namespace order_book

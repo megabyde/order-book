@@ -1,60 +1,73 @@
 #pragma once
 
-#include <iostream>
 #include <functional>
+#include <iostream>
 #include <map>
 #include <string>
 #include <unordered_map>
 
-#include "event.h"
-#include "order.h"
-#include "price_level.h"
+#include <order_book/event.hpp>
+#include <order_book/order.hpp>
+#include <order_book/price_level.hpp>
+
+namespace order_book {
 
 /**
  * Order book for a particular symbol
  */
 class OrderBook {
 public:
-    // Add new buy order at the price and quantity of shares
+    /// Add new buy order at the price and quantity of shares
     void buy(const std::string& id, uint32_t price, uint64_t quantity)
     {
         add(id, price, quantity, Order::Type::Buy);
     }
-    // Add new sell order at the price and quantity of shares
+    /// Add new sell order at the price and quantity of shares
     void sell(const std::string& id, uint32_t price, uint64_t quantity)
     {
         add(id, price, quantity, Order::Type::Sell);
     }
-    // Decrease the number of shares of the order to the given quantity
+    /// Decrease the number of shares of the order to the given quantity
     void decrease(const std::string& id, uint64_t quantity);
-    // Delete the order
+    /// Delete the order
     void remove(const std::string& id);
-    // Execute given quantity of shares of the order
+    /// Execute given quantity of shares of the order
     void execute(const std::string& id, uint64_t quantity);
-    // Fill the order completely
+    /// Fill the order completely
     void fill(const std::string& id);
 
-    // Statistics
-    size_t num_ask_orders() const
+    /// Number of resting sell orders
+    [[nodiscard]] size_t num_ask_orders() const
     {
         size_t total = 0;
-        for (const auto& kv : m_asks)
+        for (const auto& kv : m_asks) {
             total += kv.second.size();
+        }
         return total;
     }
-    size_t num_bid_orders() const
+    /// Number of resting buy orders
+    [[nodiscard]] size_t num_bid_orders() const
     {
         size_t total = 0;
-        for (const auto& kv : m_bids)
+        for (const auto& kv : m_bids) {
             total += kv.second.size();
+        }
         return total;
     }
-    size_t num_orders() const { return num_ask_orders() + num_bid_orders(); }
-    size_t num_ask_price_levels() const { return m_asks.size(); }
-    size_t num_bid_price_levels() const { return m_bids.size(); }
-    size_t num_price_levels() const { return num_ask_price_levels() + num_bid_price_levels(); }
-    // Inner market
-    bool changed() const { return m_changed; }
+    /// Number of resting orders on both sides
+    [[nodiscard]] size_t num_orders() const { return num_ask_orders() + num_bid_orders(); }
+    /// Number of sell price levels
+    [[nodiscard]] size_t num_ask_price_levels() const { return m_asks.size(); }
+    /// Number of buy price levels
+    [[nodiscard]] size_t num_bid_price_levels() const { return m_bids.size(); }
+    /// Number of price levels on both sides
+    [[nodiscard]] size_t num_price_levels() const
+    {
+        return num_ask_price_levels() + num_bid_price_levels();
+    }
+    /// Whether the best ask or bid changed since the last best_ask_bid() call
+    [[nodiscard]] bool changed() const { return m_changed; }
+    /// Best ask and bid (inner market); clears the changed() flag
     std::pair<PQ, PQ> best_ask_bid()
     {
         m_changed = false;
@@ -77,3 +90,5 @@ private:
     // Flag indicating best ask/bid change
     bool m_changed = false;
 };
+
+} // namespace order_book

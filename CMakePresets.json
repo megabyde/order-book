@@ -1,0 +1,204 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 29,
+        "patch": 0
+    },
+    "include": ["ConanPresets.json"],
+    "configurePresets": [
+        {
+            "name": "debug",
+            "displayName": "Debug",
+            "description": "Debug configuration backed by Conan's debug preset.",
+            "inherits": "conan-debug"
+        },
+        {
+            "name": "release",
+            "displayName": "Release",
+            "description": "Release configuration backed by Conan's release preset.",
+            "inherits": "conan-release"
+        },
+        {
+            "name": "sanitize",
+            "displayName": "Sanitizers (ASan + UBSan)",
+            "description": "Debug configuration with combined ASan+UBSan instrumentation from the Conan sanitize profile.",
+            "inherits": "conan-debug-addressundefinedbehavior"
+        },
+        {
+            "name": "sanitize-asan",
+            "displayName": "Sanitizers (ASan)",
+            "description": "Debug configuration with AddressSanitizer instrumentation from the Conan sanitize-asan profile.",
+            "inherits": "conan-debug-address"
+        },
+        {
+            "name": "sanitize-ubsan",
+            "displayName": "Sanitizers (UBSan)",
+            "description": "Debug configuration with UndefinedBehaviorSanitizer instrumentation from the Conan sanitize-ubsan profile.",
+            "inherits": "conan-debug-undefinedbehavior"
+        },
+        {
+            "name": "coverage",
+            "displayName": "Coverage",
+            "description": "Debug configuration with coverage instrumentation enabled. Reuses the debug toolchain.",
+            "inherits": "debug",
+            "binaryDir": "${sourceDir}/build/coverage",
+            "toolchainFile": "${sourceDir}/build/debug/generators/conan_toolchain.cmake",
+            "cacheVariables": {
+                "ENABLE_COVERAGE": "ON"
+            }
+        },
+        {
+            "name": "docs",
+            "displayName": "Docs",
+            "description": "Doxygen documentation build. Reuses the debug Conan toolchain.",
+            "inherits": "debug",
+            "binaryDir": "${sourceDir}/build/docs",
+            "toolchainFile": "${sourceDir}/build/debug/generators/conan_toolchain.cmake",
+            "cacheVariables": {
+                "BUILD_TESTING": "OFF"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "release",
+            "configurePreset": "release",
+            "configuration": "Release"
+        },
+        {
+            "name": "sanitize",
+            "configurePreset": "sanitize",
+            "configuration": "Debug"
+        },
+        {
+            "name": "sanitize-asan",
+            "configurePreset": "sanitize-asan",
+            "configuration": "Debug"
+        },
+        {
+            "name": "sanitize-ubsan",
+            "configurePreset": "sanitize-ubsan",
+            "configuration": "Debug"
+        },
+        {
+            "name": "coverage",
+            "configurePreset": "coverage",
+            "configuration": "Debug"
+        },
+        {
+            "name": "docs",
+            "configurePreset": "docs",
+            "configuration": "Debug",
+            "targets": ["docs"]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "release",
+            "configurePreset": "release",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "sanitize",
+            "inherits": "conan-debug-addressundefinedbehavior",
+            "configurePreset": "sanitize",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "sanitize-asan",
+            "inherits": "conan-debug-address",
+            "configurePreset": "sanitize-asan",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "sanitize-ubsan",
+            "inherits": "conan-debug-undefinedbehavior",
+            "configurePreset": "sanitize-ubsan",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "coverage",
+            "configurePreset": "coverage",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "debug",
+            "steps": [
+                { "type": "configure", "name": "debug" },
+                { "type": "build", "name": "debug" },
+                { "type": "test", "name": "debug" }
+            ]
+        },
+        {
+            "name": "release",
+            "steps": [
+                { "type": "configure", "name": "release" },
+                { "type": "build", "name": "release" },
+                { "type": "test", "name": "release" }
+            ]
+        },
+        {
+            "name": "sanitize",
+            "steps": [
+                { "type": "configure", "name": "sanitize" },
+                { "type": "build", "name": "sanitize" },
+                { "type": "test", "name": "sanitize" }
+            ]
+        },
+        {
+            "name": "sanitize-asan",
+            "steps": [
+                { "type": "configure", "name": "sanitize-asan" },
+                { "type": "build", "name": "sanitize-asan" },
+                { "type": "test", "name": "sanitize-asan" }
+            ]
+        },
+        {
+            "name": "sanitize-ubsan",
+            "steps": [
+                { "type": "configure", "name": "sanitize-ubsan" },
+                { "type": "build", "name": "sanitize-ubsan" },
+                { "type": "test", "name": "sanitize-ubsan" }
+            ]
+        },
+        {
+            "name": "coverage",
+            "steps": [
+                { "type": "configure", "name": "coverage" },
+                { "type": "build", "name": "coverage" },
+                { "type": "test", "name": "coverage" }
+            ]
+        }
+    ]
+}

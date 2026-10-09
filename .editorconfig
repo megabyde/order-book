@@ -1,0 +1,25 @@
+root = true
+
+# Define one fallback, then override only differing properties; later sections win
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 4
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Markdown uses trailing whitespace for hard line breaks, so preserve it. Set indent_size
+# explicitly because Prettier maps it to tabWidth; inheriting 4 would reindent nested lists.
+[*.md]
+indent_size = 2
+max_line_length = 100
+trim_trailing_whitespace = false
+
+# Prettier formats these files with 2-space indentation
+[*.{yml,yaml}]
+indent_size = 2
+
+# Make recipes require tabs; substituting spaces breaks the build
+[Makefile]
+indent_style = tab
