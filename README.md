@@ -10,20 +10,71 @@
 
 ## Overview
 
-Given a CSV file of a day of market events from an equity exchange, the program builds an order
-book per ticker. An order book comprises two ordered lists of price levels, one for the bid side and
-another for asks. A price level represents a FIFO queue of orders submitted at that price.
+`order_book` replays one trading day of an equity exchange's event feed and prints the best bid and
+offer (BBO) of a ticker each time it changes. It keeps one book per ticker: each side is a sorted set
+of price levels, and each level holds its orders in arrival order.
 
-The program takes the input CSV file name as its argument and prints the best bid and ask price and
-quantity whenever any of them changes, in the following format:
+### Input
+
+A CSV file with a header line, then one event per line:
+
+```text
+Time,Ticker,Order,T,Shares,Price[,...]
+```
+
+`Time` is milliseconds since midnight, and `Price` is in 100ths of a penny. Columns after `Price`,
+such as the `MPID` and `X` of an exchange capture, are ignored. CRLF line endings and blank lines are
+accepted.
+
+| `T`      | Effect on the order named by `Order`                                        |
+| -------- | --------------------------------------------------------------------------- |
+| `B`, `S` | Add a buy or sell order of `Shares` at `Price`                              |
+| `C`      | Decrease the order _to_ `Shares`; no effect unless smaller, removes it at 0 |
+| `D`      | Delete the order                                                            |
+| `E`      | Execute `Shares` of the order, clamped to what remains; removes it at 0     |
+| `F`      | Fill the order, removing it                                                 |
+| `T`, `X` | A trade or cross trade; the book does not change                            |
+
+The program treats the feed as the exchange's own record, in which the matching has already
+happened. `E` and `F` name the resting order that traded, and each counterparty's executions arrive
+as their own messages, so the book never matches orders itself. Matching an `E` against the
+opposite side again would count every fill twice.
+
+### Output
+
+One line per BBO change, on stdout:
 
 ```text
 <TIME>,<TICKER>,<BBP>,<BBQ>,<BAP>,<BAQ>
 ```
 
-`<TIME>` is the number of milliseconds since the start of the trading day, `<TICKER>` is the ticker
-the update was for, `<BBP>` and `<BBQ>` are the price and quantity of the best bid level or empty if
-there are no bids, and similarly `<BAP>` and `<BAQ>` for the ask.
+`<TIME>` and `<TICKER>` come from the event that caused the change. `<BBP>` and `<BBQ>` are the price
+and total quantity of the best bid level, empty if there are no bids, and `<BAP>` and `<BAQ>` are the
+same for the ask. An event that leaves the BBO as it was prints nothing: an add or delete below the
+best level, a trade, or a `C` that does not decrease the order.
+
+### Errors
+
+The replay stops at the first line it cannot apply and prints `error: line N: <reason>` to stderr
+with exit status 1; the lines before it have already been printed. A line fails on a malformed or
+out-of-range field, an unknown message type, an add that reuses a live order ID, or a `C`, `D`, `E`,
+or `F` that names no live order. A file that cannot be opened also exits with 1, and a wrong argument
+count prints the usage to stderr and exits with 2.
+
+### Design
+
+The library in `include/order_book/` has three parts:
+
+- [`feed.hpp`](include/order_book/feed.hpp): `parse_line()` turns a line into a `Message` whose
+  event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
+  that knows the line format.
+- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book. Each side is a
+  `std::map` from price to a level holding a running total and a `std::list` of orders, and an index
+  from order ID to stable iterators finds any order in one hash lookup. An event costs that lookup,
+  plus a level lookup for an add, whatever the depth of the level.
+- [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
+  feed, keeps a book per ticker, and writes a line whenever a BBO changes. The application opens the
+  file and calls it, and so does the replay benchmark.
 
 This repository uses:
 
@@ -58,9 +109,12 @@ stable across toolchain changes.
 
 ```text
 .
-├── include/                 public headers
-├── src/                     application sources
-├── tests/                   unit tests
+├── include/order_book/      public headers
+├── src/                     library and application sources
+├── tests/                   unit, application, and differential tests; sample feed in tests/data/
+├── bench/                   Google Benchmark suite
+├── scripts/                 feed generator, reference model, Conan settings check
+├── docs/                    development workflows
 ├── conanfile.py             Conan dependency definition
 ├── conan/settings_user.yml  custom sanitizer setting
 ├── profiles/                default and sanitizer Conan profiles
@@ -137,8 +191,8 @@ presets are Unix-only.
 
 ## Development workflows
 
-For sanitizer modes, test and preset behavior, dependency updates, formatting and linting,
-coverage, documentation generation, build policy, and IDE setup, see
+For sanitizer modes, the test layers, benchmarks, preset behavior, dependency updates, formatting
+and linting, coverage, documentation generation, build policy, and IDE setup, see
 [Development workflows](docs/development.md).
 
 ## Install
