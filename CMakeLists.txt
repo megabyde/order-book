@@ -24,6 +24,7 @@ option(WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 option(ENABLE_COVERAGE "Enable code coverage instrumentation" OFF)
 option(ENABLE_HARDENING "Enable hardening compile and link flags" ON)
 option(ENABLE_LTO "Enable link-time optimization for Release builds" ON)
+option(BUILD_BENCHMARKS "Build the Google Benchmark suite" ON)
 
 include(CheckIPOSupported)
 if(ENABLE_LTO)
@@ -148,7 +149,7 @@ endfunction()
 # Non-main code lives in a library so the application and the tests link the same artifact instead
 # of recompiling sources. Include dirs and the language standard are PUBLIC so both consumers
 # inherit them.
-add_library(order_book_lib STATIC src/order_book.cpp src/split.cpp)
+add_library(order_book_lib STATIC src/order_book.cpp src/replay.cpp src/split.cpp)
 target_include_directories(order_book_lib PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(order_book_lib PUBLIC cxx_std_23)
 enable_project_options(order_book_lib)
@@ -209,8 +210,8 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     include(GoogleTest)
     add_executable(
-        order_book_test tests/event_test.cpp tests/order_book_test.cpp tests/split_test.cpp
-                        tests/utils_test.cpp
+        order_book_test tests/event_test.cpp tests/order_book_test.cpp tests/replay_test.cpp
+                        tests/split_test.cpp tests/utils_test.cpp
     )
     target_link_libraries(order_book_test PRIVATE order_book_lib GTest::gtest_main)
     enable_project_options(order_book_test)
@@ -268,5 +269,28 @@ if(BUILD_TESTING)
         endfunction()
         add_differential_test(Default 50000 8 1)
         add_differential_test(Large 200000 20 2)
+    endif()
+endif()
+
+# --- benchmarks ------------------------------------------------------------
+if(BUILD_BENCHMARKS)
+    find_package(benchmark CONFIG REQUIRED)
+    add_executable(order_book_bench bench/order_book_bench.cpp)
+    target_link_libraries(order_book_bench PRIVATE order_book_lib benchmark::benchmark_main)
+    # MSVC deprecates std::getenv (C4996), which reads ORDER_BOOK_REPLAY_CSV
+    target_compile_definitions(
+        order_book_bench PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
+    )
+    enable_project_options(order_book_bench)
+
+    # One iteration of each benchmark, replaying the sample feed, so every preset builds and runs
+    # the suite. make bench takes the measurements.
+    if(BUILD_TESTING)
+        add_test(NAME Bench.Smoke COMMAND order_book_bench --benchmark_min_time=1x)
+        set_tests_properties(
+            Bench.Smoke
+            PROPERTIES ENVIRONMENT
+                       ORDER_BOOK_REPLAY_CSV=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
+        )
     endif()
 endif()
