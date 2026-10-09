@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate a synthetic exchange event feed with the invariants of a real feed replay.
 
-Usage: gen_feed.py [--events N] [--tickers K] [--seed S] [-o FILE]
+Usage: gen_feed.py [--events N] [--tickers K] [--depth D] [--seed S] [-o FILE]
 
 The output has the same format as an exchange feed capture: a header, then
 `Time,Ticker,Order,T,Shares,Price,MPID,X` rows with CRLF line endings. The same seed always
@@ -10,6 +10,8 @@ produces the same bytes.
 The feed is internally consistent, as an exchange's own feed is: adds never cross the book,
 C/D/E/F reference only live orders, E never exceeds the remaining quantity, C strictly decreases,
 and every order still resting after the last random event is deleted, so each book ends empty.
+A book holding D live orders deletes one instead of adding, so books reach a steady state rather
+than growing for the whole run.
 E/F/C/D rows carry price 0; T rows carry order 0.
 """
 
@@ -70,7 +72,7 @@ def ticker_name(index: int) -> str:
     return letters[index // 676 % 26] + letters[index // 26 % 26] + letters[index % 26]
 
 
-def generate(events: int, tickers: int, seed: int) -> list[str]:
+def generate(events: int, tickers: int, depth: int, seed: int) -> list[str]:
     rng = random.Random(seed)
     books = {ticker_name(i): Book(mid=rng.randrange(1000, 5000) * TICK) for i in range(tickers)}
     names = list(books)
@@ -90,6 +92,8 @@ def generate(events: int, tickers: int, seed: int) -> list[str]:
         if rng.random() < 0.05:
             book.mid = max(TICK * 10, book.mid + rng.choice((-TICK, TICK)))
         action = rng.choices(actions, weights)[0] if book.ids else "add"
+        if action == "add" and len(book.ids) >= depth:
+            action = "D"
 
         if action == "add":
             side = rng.choice("BS")
@@ -152,13 +156,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--events", type=int, default=50_000, help="random events before drain")
     parser.add_argument("--tickers", type=int, default=8, help="number of tickers")
+    parser.add_argument("--depth", type=int, default=400, help="live orders per book at most")
     parser.add_argument("--seed", type=int, default=1, help="random seed")
     parser.add_argument("-o", "--output", help="output file (default: stdout)")
     args = parser.parse_args()
-    if args.events < 0 or not 1 <= args.tickers <= 26**3:
-        parser.error("--events must be >= 0 and --tickers in [1, 17576]")
+    if args.events < 0 or not 1 <= args.tickers <= 26**3 or args.depth < 1:
+        parser.error("--events must be >= 0, --tickers in [1, 17576], and --depth >= 1")
 
-    data = "\r\n".join(generate(args.events, args.tickers, args.seed)) + "\r\n"
+    data = "\r\n".join(generate(args.events, args.tickers, args.depth, args.seed)) + "\r\n"
     if args.output:
         with open(args.output, "w", newline="") as out:
             out.write(data)

@@ -15,9 +15,9 @@ class OrderBookConan(ConanFile):
 
     settings = "os", "compiler", "build_type", "arch"
 
-    options = {"with_tests": [True, False]}
+    options = {"with_tests": [True, False], "with_benchmarks": [True, False]}
 
-    default_options = {"with_tests": True}
+    default_options = {"with_tests": True, "with_benchmarks": True}
 
     def set_version(self):
         # Single source of truth: parse the version from the CMake project() call so the
@@ -64,6 +64,8 @@ class OrderBookConan(ConanFile):
         self.tool_requires("cmake/[>=3.29]")
         if self.options.with_tests:
             self.test_requires("gtest/1.17.0")
+        if self.options.with_benchmarks:
+            self.test_requires("benchmark/1.9.5")
 
     def generate(self):
         # CMakeConfigDeps generates CMake CONFIG-mode find_package files under the build
@@ -78,6 +80,7 @@ class OrderBookConan(ConanFile):
         # Flow the Conan option into CMake: with tests disabled, BUILD_TESTING (from
         # include(CTest)) is off and find_package(GTest) is never reached.
         tc.cache_variables["BUILD_TESTING"] = bool(self.options.with_tests)
+        tc.cache_variables["BUILD_BENCHMARKS"] = bool(self.options.with_benchmarks)
         # Compiler caching for first-party targets when ccache is on PATH (same
         # optional-tool probe as the ninja check above); dependency binaries come from
         # the Conan cache and don't need it. The Visual Studio generator ignores

@@ -51,6 +51,33 @@ Tests are controlled by CMake's built-in `BUILD_TESTING` option from `include(CT
 leaves it at the default `ON`, so `make debug`, `make release`, `make sanitize*`, and
 `make coverage` all run the GTest suite.
 
+## Benchmarks
+
+Prerequisite: Python 3 on `PATH` to generate the synthetic feed.
+
+Build the release benchmarks and run them:
+
+```bash
+make bench
+```
+
+The first run writes a seeded 1M-event feed to `build/bench/feed.csv` with
+[`scripts/gen_feed.py`](../scripts/gen_feed.py); `BM_Replay` replays it through the same
+`order_book::replay()` the application uses. To replay another capture instead, point
+`ORDER_BOOK_REPLAY_CSV` at it:
+
+```bash
+ORDER_BOOK_REPLAY_CSV=/path/to/feed.csv make bench
+```
+
+`BENCH_ARGS` replaces the default Google Benchmark flags, 10 repetitions reporting aggregates only.
+For example, `make bench BENCH_ARGS=--benchmark_filter=BM_Replay` runs the replay alone.
+
+The suite is a Conan `test_requires` behind the `with_benchmarks` option, which sets CMake's
+`BUILD_BENCHMARKS`; both default to on. Every workflow preset builds it and runs one iteration of
+each benchmark as the `Bench.Smoke` test, so the suite cannot rot between measurements. Smoke
+timings are meaningless; take numbers from `make bench` on an idle machine.
+
 ## Public presets
 
 The main workflow presets are `debug`, `release`, `sanitize`, `sanitize-asan`, `sanitize-ubsan`, and
