@@ -1,0 +1,11 @@
+# UndefinedBehaviorSanitizer only. Inherits the shared base and appends UB instrumentation.
+include(./sanitize-common)
+
+[settings]
+compiler.sanitizer=UndefinedBehavior
+
+[conf]
+tools.build:cflags+=["-fsanitize=undefined"]
+tools.build:cxxflags+=["-fsanitize=undefined"]
+tools.build:sharedlinkflags=["-fsanitize=undefined"]
+tools.build:exelinkflags=["-fsanitize=undefined"]

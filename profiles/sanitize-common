@@ -1,0 +1,22 @@
+# Shared base for the sanitizer profiles. Each mode profile (sanitize-asan, sanitize-ubsan,
+# sanitize) inherits this with include() and appends its own -fsanitize=... flags. Requires
+# conan/settings_user.yml (installed by `make bootstrap-sanitize`) for the compiler.sanitizer
+# subsetting, which gives instrumented dependency binaries a distinct package_id.
+include(./default)
+
+[settings]
+build_type=Debug
+
+[conf]
+# Instrumentation flags common to every mode; leaves append -fsanitize=<modes> with +=.
+tools.build:cflags=["-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
+tools.build:cxxflags=["-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
+
+# Sanitizer runtime options use this profile as their single source of truth. Conan injects [runenv]
+# into the generated conan-debug-<sanitizer> CMake test presets (and conanrun env scripts);
+# the public sanitize* test presets in CMakePresets.json inherit those, so `ctest`/`cmake
+# --workflow` runs the instrumented tests with these options. ASAN_OPTIONS is ignored by a
+# UBSan-only build and UBSAN_OPTIONS by an ASan-only build, so both are safe for every mode.
+[runenv]
+ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_stacktrace=1:check_initialization_order=1:detect_stack_use_after_return=1:strict_string_checks=1
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1

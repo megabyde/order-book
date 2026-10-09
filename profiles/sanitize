@@ -1,0 +1,12 @@
+# Combined ASan + UBSan; the mode driven by `make sanitize` and CI. Inherits the shared base
+# and appends both instrumentations.
+include(./sanitize-common)
+
+[settings]
+compiler.sanitizer=AddressUndefinedBehavior
+
+[conf]
+tools.build:cflags+=["-fsanitize=address,undefined"]
+tools.build:cxxflags+=["-fsanitize=address,undefined"]
+tools.build:sharedlinkflags=["-fsanitize=address,undefined"]
+tools.build:exelinkflags=["-fsanitize=address,undefined"]

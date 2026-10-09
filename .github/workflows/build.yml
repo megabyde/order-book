@@ -1,0 +1,165 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.preset }} / ${{ matrix.os }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CC: ${{ matrix.compiler == 'gcc' && 'gcc-14' || 'clang' }}
+      CXX: ${{ matrix.compiler == 'gcc' && 'g++-14' || 'clang++' }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        preset: [debug, release, sanitize]
+        compiler: [gcc, clang]
+        exclude:
+          - os: macos-latest
+            compiler: gcc
+
+    steps:
+      - uses: actions/checkout@v7
+      # Tool pins live in .github/ci.env, shared across workflows; loading it into
+      # GITHUB_ENV exposes the pins to every later step's ${{ env.* }}. The anchor
+      # dedupes the step across this file's jobs (anchors are file-scoped, hence
+      # still one step per job). shell: bash is a no-op on Linux/macOS and makes the
+      # alias valid in the Windows job, where the default is pwsh.
+      - &load-ci-env
+        name: Load CI env
+        shell: bash
+        run: cat .github/ci.env >> "$GITHUB_ENV"
+      - name: Install GCC 14
+        if: runner.os == 'Linux' && matrix.compiler == 'gcc'
+        run: sudo apt-get update && sudo apt-get install -y gcc-14 g++-14
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+          cache_packages: true
+      # The Conan toolchain probes for mold only on Linux, so the macOS leg installs ccache alone.
+      # Refresh apt metadata first because runner images can retain package lists whose versions no
+      # longer exist
+      - name: Install ccache and mold
+        run: ${{ runner.os == 'macOS' && 'brew install ccache' || 'sudo apt-get update && sudo apt-get install -y ccache mold' }}
+      # actions/cache saves only after an exact-key miss. The run_id suffix therefore saves an
+      # updated cache after every run, while restore-keys starts from the newest previous cache.
+      - uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-
+      - run: make lock-check
+      - run: make bootstrap
+      - if: matrix.preset == 'sanitize'
+        run: make bootstrap-sanitize
+      - run: make ${{ matrix.preset }}
+      - name: ccache stats
+        run: ccache -sv
+      # Install the application to a throwaway prefix and replay the sample feed with it, verifying the
+      # install() rule.
+      - name: Verify install (release)
+        if: matrix.preset == 'release'
+        run: |
+          cmake --install build/release --prefix "$RUNNER_TEMP/install"
+          cmake -DAPP="$RUNNER_TEMP/install/bin/order_book" -DINPUT=tests/data/sample.csv \
+            -DEXPECTED=tests/data/sample.expected -DACTUAL="$RUNNER_TEMP/sample.actual" \
+            -P tests/compare_output.cmake
+
+  # Windows has no make; it drives Conan and the CMake presets directly. The Visual
+  # Studio generator (selected by conanfile.py on Windows) locates MSVC itself, so no
+  # vcvars environment or third-party action is needed. The sanitize and coverage
+  # presets are Unix-only, so Windows covers release.
+  windows:
+    name: release / windows-latest / msvc
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - *load-ci-env
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+          cache_packages: true
+      - name: Install dependencies (release)
+        run: conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
+      - name: Build and test (release preset)
+        run: cmake --workflow --preset release
+      - name: Verify install (release)
+        shell: cmd
+        run: |
+          cmake --install build\release --prefix "%RUNNER_TEMP%\install" || exit /b 1
+          cmake -DAPP="%RUNNER_TEMP%\install\bin\order_book.exe" -DINPUT=tests/data/sample.csv -DEXPECTED=tests/data/sample.expected -DACTUAL="%RUNNER_TEMP%\sample.actual" -P tests/compare_output.cmake || exit /b 1
+
+  coverage:
+    name: coverage / ubuntu-latest / gcc
+    runs-on: ubuntu-latest
+    env:
+      CC: gcc-14
+      CXX: g++-14
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+      GCOV_EXECUTABLE: gcov-14
+    steps:
+      - uses: actions/checkout@v7
+      - *load-ci-env
+      - run: sudo apt-get update && sudo apt-get install -y ccache mold gcc-14 g++-14
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+          cache_packages: true
+      - uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-coverage-${{ github.run_id }}
+          restore-keys: ccache-coverage-
+      - run: python3 -m pip install --break-system-packages --user gcovr==${{ env.GCOVR_VERSION }}
+      - run: make bootstrap
+      # Builds, runs the suite, and fails if line coverage drops below the floor.
+      - run: make coverage-report
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: build/coverage/coverage-report/
+
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v7
+      - *load-ci-env
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+          cache_packages: true
+      # ~/.local/bin precedes /usr/bin on the runner, so these shadow the image's
+      # unpinned clang-format/clang-tidy.
+      - name: Pin lint toolchain
+        run: |
+          # cmakelang reads .cmake-format.yaml through PyYAML without declaring the dependency. Pin
+          # it explicitly instead of relying on the runner image.
+          python3 -m pip install --break-system-packages --user \
+            clang-format==${{ env.CLANG_FORMAT_VERSION }} \
+            clang-tidy==${{ env.CLANG_TIDY_VERSION }} \
+            cmakelang==${{ env.CMAKELANG_VERSION }} \
+            pyyaml==${{ env.PYYAML_VERSION }} \
+            ruff==${{ env.RUFF_VERSION }}
+          npm install -g \
+            prettier@${{ env.PRETTIER_VERSION }} \
+            markdownlint-cli2@${{ env.MARKDOWNLINT_CLI2_VERSION }}
+      - run: make bootstrap
+      - run: make format-check
+      - run: make lint

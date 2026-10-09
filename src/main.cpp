@@ -1,26 +1,44 @@
+#include <order_book/event.hpp>
+#include <order_book/order.hpp>
+#include <order_book/order_book.hpp>
+
+#include <cassert>
+#include <cstdint>
 #include <fstream>
+#include <iostream>
+#include <ostream>
+#include <string>
 #include <unordered_map>
 
-#include "order_book.h"
+using order_book::Event;
+using order_book::OrderBook;
+using order_book::PQ;
 
-void
-print(std::ostream& os, uint64_t time, const std::string& ticker, PQ best_ask, PQ best_bid)
+namespace {
+
+void print(std::ostream& os, uint64_t time, const std::string& ticker, PQ best_ask, PQ best_bid)
 {
     os << time << ',' << ticker << ',';
-    if (best_bid.price != 0)
+    if (best_bid.price != 0) {
         os << best_bid;
-    else
+    }
+    else {
         os << ',';
+    }
     os << ',';
-    if (best_ask.price != 0)
+    if (best_ask.price != 0) {
         os << best_ask;
-    else
+    }
+    else {
         os << ',';
+    }
     os << '\n';
 }
 
-int
-main(int argc, const char* argv[])
+} // namespace
+
+// NOLINTNEXTLINE(bugprone-exception-escape)
+int main(int argc, const char* argv[])
 {
     if (argc != 2) {
         std::cout << "Usage: " << argv[0] << " FILE\n";
@@ -38,8 +56,9 @@ main(int argc, const char* argv[])
     getline(input, line);
     while (getline(input, line)) {
         // Skip empty strings
-        if (line.find_last_not_of(" \t\n\v\f\r") == std::string::npos)
+        if (line.find_last_not_of(" \t\n\v\f\r") == std::string::npos) {
             continue;
+        }
 
         // Parse event message
         Event event(line);
@@ -71,7 +90,7 @@ main(int argc, const char* argv[])
         }
 
         if (book.changed()) {
-            auto ask_bid = book.best_ask_bid();
+            const auto ask_bid = book.best_ask_bid();
             print(std::cout, event.time, event.ticker, ask_bid.first, ask_bid.second);
         }
     }

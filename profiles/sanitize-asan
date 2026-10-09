@@ -1,0 +1,11 @@
+# AddressSanitizer only. Inherits the shared base and appends address instrumentation.
+include(./sanitize-common)
+
+[settings]
+compiler.sanitizer=Address
+
+[conf]
+tools.build:cflags+=["-fsanitize=address"]
+tools.build:cxxflags+=["-fsanitize=address"]
+tools.build:sharedlinkflags=["-fsanitize=address"]
+tools.build:exelinkflags=["-fsanitize=address"]

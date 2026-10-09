@@ -1,9 +1,17 @@
 /**
  * Tests for order book
  */
-#include "../order_book.h"
+#include <gtest/gtest.h>
 
-#include <gmock/gmock.h>
+#include <order_book/order.hpp>
+#include <order_book/order_book.hpp>
+
+#include <utility>
+
+using order_book::OrderBook;
+using order_book::PQ;
+
+// NOLINTBEGIN(readability-magic-numbers)
 
 TEST(OrderBookTest, TestStatistics)
 {
@@ -125,3 +133,5 @@ TEST(OrderBookTest, TestTrading)
     book.execute("6", 100);
     EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1120, 50), PQ()));
 }
+
+// NOLINTEND(readability-magic-numbers)

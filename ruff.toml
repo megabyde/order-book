@@ -1,0 +1,19 @@
+# 100 columns, matching the repo-wide convention (.clang-format, .cmake-format.yaml, and
+# .editorconfig/markdownlint all use 100); ruff's default is 88.
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN"]
+
+[lint.isort]
+# The local conan/ directory contains settings_user.yml, but its name shadows the third-party conan
+# package. isort's source detection therefore classifies `from conan import ConanFile` as
+# first-party and separates it from the conan.tools imports. Mark the package as third-party
+# explicitly.
+known-third-party = ["conan"]
+
+[lint.per-file-ignores]
+# Conan reads the recipe's options and default_options class attributes as dictionaries, so
+# RUF012's ClassVar/__init__ guidance does not apply. Conan also invokes recipe methods through an
+# untyped callback API, where the annotations required by ANN would add no useful information.
+"conanfile.py" = ["RUF012", "ANN"]

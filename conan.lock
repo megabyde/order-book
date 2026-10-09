@@ -1,0 +1,11 @@
+{
+    "version": "0.5",
+    "requires": [
+        "gtest/1.17.0#5224b3b3ff3b4ce1133cbdd27d53ee7d%1755784855.585"
+    ],
+    "build_requires": [
+        "cmake/3.29#platform"
+    ],
+    "python_requires": [],
+    "config_requires": []
+}

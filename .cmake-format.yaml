@@ -1,0 +1,13 @@
+# Configures both cmake-format and cmake-lint (cmakelang).
+format:
+  line_width: 100
+  tab_size: 4
+  dangle_parens: true
+  separate_ctrl_name_with_space: false
+  separate_fn_name_with_space: false
+  command_case: lower
+  keyword_case: upper
+
+lint:
+  # C0111: helper functions here are one screen long; no mandatory docstrings.
+  disabled_codes: [C0111]
