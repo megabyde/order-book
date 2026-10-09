@@ -17,8 +17,10 @@ jobs:
     name: ${{ matrix.preset }} / ${{ matrix.os }} / ${{ matrix.compiler }}
     runs-on: ${{ matrix.os }}
     env:
-      CC: ${{ matrix.compiler == 'gcc' && 'gcc-14' || 'clang' }}
-      CXX: ${{ matrix.compiler == 'gcc' && 'g++-14' || 'clang++' }}
+      # macOS clang is AppleClang. Linux Clang is pinned to 19: libstdc++ declares std::expected only
+      # when the compiler reports C++20 concepts (__cpp_concepts >= 202002L), which Clang 18 does not.
+      CC: ${{ matrix.compiler == 'gcc' && 'gcc-14' || matrix.os == 'ubuntu-latest' && 'clang-19' || 'clang' }}
+      CXX: ${{ matrix.compiler == 'gcc' && 'g++-14' || matrix.os == 'ubuntu-latest' && 'clang++-19' || 'clang++' }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 200M
     strategy:
@@ -45,6 +47,9 @@ jobs:
       - name: Install GCC 14
         if: runner.os == 'Linux' && matrix.compiler == 'gcc'
         run: sudo apt-get update && sudo apt-get install -y gcc-14 g++-14
+      - name: Install Clang 19
+        if: runner.os == 'Linux' && matrix.compiler == 'clang'
+        run: sudo apt-get update && sudo apt-get install -y clang-19
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}

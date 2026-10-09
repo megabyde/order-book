@@ -1,221 +1,246 @@
-/**
- * Tests for order book
- */
 #include <gtest/gtest.h>
 
-#include <order_book/order.hpp>
+#include <order_book/feed.hpp>
 #include <order_book/order_book.hpp>
 
-#include <stdexcept>
-#include <utility>
+#include <optional>
+#include <ostream>
+#include <string>
+#include <string_view>
 
+using order_book::AddOrder;
+using order_book::Bbo;
+using order_book::BookError;
+using order_book::DecreaseOrder;
+using order_book::DeleteOrder;
+using order_book::Event;
+using order_book::ExecuteOrder;
+using order_book::FillOrder;
+using order_book::Level;
+using order_book::NoOp;
 using order_book::OrderBook;
-using order_book::PQ;
+using order_book::Price;
+using order_book::Quantity;
+using order_book::Side;
+
+namespace order_book {
+
+// Google Test prints these in failure messages. It finds them by argument-dependent lookup, which
+// skips unnamed namespaces, so they need external linkage in the type's namespace.
+// NOLINTBEGIN(misc-use-internal-linkage)
+void PrintTo(const Level& level, std::ostream* os)
+{
+    *os << level.price << 'x' << level.quantity;
+}
+
+void PrintTo(const Bbo& bbo, std::ostream* os)
+{
+    *os << "bid ";
+    if (bbo.bid) {
+        PrintTo(*bbo.bid, os);
+    }
+    *os << ", ask ";
+    if (bbo.ask) {
+        PrintTo(*bbo.ask, os);
+    }
+}
+// NOLINTEND(misc-use-internal-linkage)
+
+} // namespace order_book
+
+namespace {
 
 // NOLINTBEGIN(readability-magic-numbers)
 
-TEST(OrderBookTest, TestStatistics)
+// A fresh book per test, with helpers that fail the test if the book rejects a message. The gtest
+// base is a parameter so that a parametrized suite gets the same helpers through single
+// inheritance.
+template <typename Base = testing::Test> class BookTest : public Base {
+protected:
+    void apply(std::string_view order, const Event& event)
+    {
+        const auto applied = book.apply(order, event);
+        ASSERT_TRUE(applied) << "rejected order " << order;
+    }
+
+    void buy(std::string_view order, Price price, Quantity shares)
+    {
+        apply(order, AddOrder{.side = Side::Buy, .price = price, .shares = shares});
+    }
+
+    void sell(std::string_view order, Price price, Quantity shares)
+    {
+        apply(order, AddOrder{.side = Side::Sell, .price = price, .shares = shares});
+    }
+
+    // TEST_F bodies are subclasses of the fixture and reach its state through protected members
+    OrderBook book; // NOLINT(misc-non-private-member-variables-in-classes)
+};
+
+using OrderBookTest = BookTest<>;
+
+Bbo bbo(std::optional<Level> bid, std::optional<Level> ask)
 {
-    OrderBook book;
-
-    EXPECT_EQ(book.num_ask_orders(), 0);
-    EXPECT_EQ(book.num_bid_orders(), 0);
-    EXPECT_EQ(book.num_orders(), 0);
-
-    EXPECT_EQ(book.num_ask_price_levels(), 0);
-    EXPECT_EQ(book.num_bid_price_levels(), 0);
-    EXPECT_EQ(book.num_price_levels(), 0);
-
-    // New buy order
-    book.buy("1", 1110, 150);
-
-    EXPECT_EQ(book.num_ask_orders(), 0);
-    EXPECT_EQ(book.num_bid_orders(), 1);
-    EXPECT_EQ(book.num_orders(), 1);
-
-    EXPECT_EQ(book.num_ask_price_levels(), 0);
-    EXPECT_EQ(book.num_bid_price_levels(), 1);
-    EXPECT_EQ(book.num_price_levels(), 1);
-
-    // New buy order at the same price
-    book.buy("2", 1110, 100);
-
-    EXPECT_EQ(book.num_ask_orders(), 0);
-    EXPECT_EQ(book.num_bid_orders(), 2);
-    EXPECT_EQ(book.num_orders(), 2);
-
-    EXPECT_EQ(book.num_ask_price_levels(), 0);
-    EXPECT_EQ(book.num_bid_price_levels(), 1);
-    EXPECT_EQ(book.num_price_levels(), 1);
-
-    // New sell order
-    book.sell("3", 1120, 150);
-
-    EXPECT_EQ(book.num_ask_orders(), 1);
-    EXPECT_EQ(book.num_bid_orders(), 2);
-    EXPECT_EQ(book.num_orders(), 3);
-
-    EXPECT_EQ(book.num_ask_price_levels(), 1);
-    EXPECT_EQ(book.num_bid_price_levels(), 1);
-    EXPECT_EQ(book.num_price_levels(), 2);
+    return Bbo{.bid = bid, .ask = ask};
 }
 
-TEST(OrderBookTest, TestBestBid)
+TEST_F(OrderBookTest, CountsOrdersAndLevels)
 {
-    OrderBook book;
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ()));
+    EXPECT_EQ(book.order_count(), 0U);
+    EXPECT_EQ(book.level_count(), 0U);
 
-    book.buy("1", 1110, 150);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1110, 150)));
+    buy("1", 1110, 150);
+    buy("2", 1110, 100);
+    EXPECT_EQ(book.order_count(), 2U);
+    EXPECT_EQ(book.level_count(), 1U);
 
-    // New buy order at the same price
-    book.buy("2", 1110, 50);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1110, 200)));
-
-    // New buy order at a higher price
-    book.buy("3", 1120, 100);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1120, 100)));
-
-    // New buy order at a lower price
-    book.buy("4", 1100, 100);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1120, 100)));
-
-    // Remove/decrease orders
-    book.remove("2");
-    book.remove("1");
-    book.remove("3");
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1100, 100)));
-    book.decrease("4", 50);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1100, 50)));
-    book.remove("4");
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ()));
+    sell("3", 1120, 150);
+    EXPECT_EQ(book.order_count(), 3U);
+    EXPECT_EQ(book.level_count(), 2U);
 }
 
-TEST(OrderBookTest, TestBestAsk)
+TEST_F(OrderBookTest, BestBidIsHighestLevelTotal)
 {
-    OrderBook book;
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ()));
+    EXPECT_EQ(book.bbo(), bbo({}, {}));
 
-    book.sell("1", 1110, 150);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1110, 150), PQ()));
+    buy("1", 1110, 150);
+    EXPECT_EQ(book.bbo(), bbo(Level{1110, 150}, {}));
+    buy("2", 1110, 50);
+    EXPECT_EQ(book.bbo(), bbo(Level{1110, 200}, {}));
+    buy("3", 1120, 100);
+    EXPECT_EQ(book.bbo(), bbo(Level{1120, 100}, {}));
+    buy("4", 1100, 100);
+    EXPECT_EQ(book.bbo(), bbo(Level{1120, 100}, {}));
 
-    // New sell order at a higher price
-    book.sell("3", 1120, 100);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1110, 150), PQ()));
-
-    // New sell order at a lower price
-    book.sell("4", 1100, 100);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1100, 100), PQ()));
+    apply("2", DeleteOrder{});
+    apply("1", DeleteOrder{});
+    apply("3", DeleteOrder{});
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 100}, {}));
+    apply("4", DeleteOrder{});
+    EXPECT_EQ(book.bbo(), bbo({}, {}));
+    EXPECT_EQ(book.level_count(), 0U);
 }
 
-TEST(OrderBookTest, TestTrading)
+TEST_F(OrderBookTest, BestAskIsLowestLevelTotal)
 {
-    OrderBook book;
-    book.sell("1", 1110, 150);
-    book.sell("2", 1108, 100);
-    book.buy("3", 1105, 100);
-    book.buy("4", 1105, 200);
-    book.buy("5", 1100, 200);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1108, 100), PQ(1105, 300)));
+    sell("1", 1110, 150);
+    EXPECT_EQ(book.bbo(), bbo({}, Level{1110, 150}));
+    sell("3", 1120, 100);
+    EXPECT_EQ(book.bbo(), bbo({}, Level{1110, 150}));
+    sell("4", 1100, 100);
+    EXPECT_EQ(book.bbo(), bbo({}, Level{1100, 100}));
+}
 
-    // An execution reduces the named resting order and nothing on the other side
-    book.execute("2", 40);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1108, 60), PQ(1105, 300)));
-    book.execute("4", 50);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1108, 60), PQ(1105, 250)));
+TEST_F(OrderBookTest, ExecutionsReduceOnlyTheNamedOrder)
+{
+    sell("1", 1110, 150);
+    sell("2", 1108, 100);
+    buy("3", 1105, 100);
+    buy("4", 1105, 200);
+    buy("5", 1100, 200);
+    EXPECT_EQ(book.bbo(), bbo(Level{1105, 300}, Level{1108, 100}));
 
-    book.fill("3");
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1108, 60), PQ(1105, 150)));
+    apply("2", ExecuteOrder{40});
+    EXPECT_EQ(book.bbo(), bbo(Level{1105, 300}, Level{1108, 60}));
+    apply("4", ExecuteOrder{50});
+    EXPECT_EQ(book.bbo(), bbo(Level{1105, 250}, Level{1108, 60}));
+
+    apply("3", FillOrder{});
+    EXPECT_EQ(book.bbo(), bbo(Level{1105, 150}, Level{1108, 60}));
 
     // Executing the remainder removes the order and its now empty level
-    book.execute("2", 60);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1110, 150), PQ(1105, 150)));
+    apply("2", ExecuteOrder{60});
+    EXPECT_EQ(book.bbo(), bbo(Level{1105, 150}, Level{1110, 150}));
 
     // An execution beyond the remaining quantity is clamped to it
-    book.execute("4", 1000);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1110, 150), PQ(1100, 200)));
+    apply("4", ExecuteOrder{1000});
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 200}, Level{1110, 150}));
 
-    // Emptying the last bid level
-    book.fill("5");
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1110, 150), PQ()));
-    book.fill("1");
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ()));
-    EXPECT_EQ(book.num_orders(), 0U);
-    EXPECT_EQ(book.num_price_levels(), 0U);
+    apply("5", FillOrder{});
+    EXPECT_EQ(book.bbo(), bbo({}, Level{1110, 150}));
+    apply("1", FillOrder{});
+    EXPECT_EQ(book.bbo(), bbo({}, {}));
+    EXPECT_EQ(book.order_count(), 0U);
+    EXPECT_EQ(book.level_count(), 0U);
 }
 
-TEST(OrderBookTest, TestDecreaseTo)
+TEST_F(OrderBookTest, DecreaseSetsTheNewQuantity)
 {
-    OrderBook book;
-    book.buy("1", 1100, 100);
-    book.buy("2", 1100, 50);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1100, 150)));
+    buy("1", 1100, 100);
+    buy("2", 1100, 50);
 
     // Shares is the new quantity, not the amount to subtract
-    book.decrease("1", 40);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1100, 90)));
+    apply("1", DecreaseOrder{40});
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 90}, {}));
 
     // A decrease to the current quantity or above changes nothing
-    book.decrease("1", 40);
-    book.decrease("1", 70);
-    EXPECT_FALSE(book.changed());
-    EXPECT_EQ(book.num_bid_orders(), 2U);
+    apply("1", DecreaseOrder{40});
+    apply("1", DecreaseOrder{70});
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 90}, {}));
+    EXPECT_EQ(book.order_count(), 2U);
 
     // A decrease to 0 removes the order
-    book.decrease("1", 0);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(), PQ(1100, 50)));
-    EXPECT_EQ(book.num_bid_orders(), 1U);
+    apply("1", DecreaseOrder{0});
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 50}, {}));
+    EXPECT_EQ(book.order_count(), 1U);
 }
 
-TEST(OrderBookTest, TestLevelQuantityAbove32Bits)
+TEST_F(OrderBookTest, LevelTotalExceeds32Bits)
 {
-    OrderBook book;
-    book.sell("1", 1100, 4'000'000'000);
-    book.sell("2", 1100, 4'000'000'000);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1100, 8'000'000'000), PQ()));
+    sell("1", 1100, 4'000'000'000);
+    sell("2", 1100, 4'000'000'000);
+    EXPECT_EQ(book.bbo(), bbo({}, Level{1100, 8'000'000'000}));
 }
 
-TEST(OrderBookTest, TestUnknownOrder)
+TEST_F(OrderBookTest, TradesNeedNoLiveOrder)
 {
-    OrderBook book;
-    book.buy("1", 1100, 100);
-    static_cast<void>(book.best_ask_bid());
-
-    EXPECT_THROW(book.decrease("2", 10), std::invalid_argument);
-    EXPECT_THROW(book.remove("2"), std::invalid_argument);
-    EXPECT_THROW(book.execute("2", 10), std::invalid_argument);
-    EXPECT_THROW(book.fill("2"), std::invalid_argument);
-    try {
-        book.remove("2");
-        FAIL() << "expected std::invalid_argument";
-    }
-    catch (const std::invalid_argument& error) {
-        EXPECT_STREQ(error.what(), "unknown order '2'");
-    }
-    EXPECT_FALSE(book.changed());
-    EXPECT_EQ(book.num_orders(), 1U);
+    buy("1", 1100, 100);
+    apply("0", NoOp{});
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 100}, {}));
 }
 
-TEST(OrderBookTest, TestDuplicateAdd)
-{
-    OrderBook book;
-    book.buy("1", 1100, 100);
-    static_cast<void>(book.best_ask_bid());
+struct UnknownOrderCase {
+    std::string_view name;
+    Event event;
+};
 
-    try {
-        book.sell("1", 1200, 10);
-        FAIL() << "expected std::invalid_argument";
-    }
-    catch (const std::invalid_argument& error) {
-        EXPECT_STREQ(error.what(), "duplicate order '1'");
-    }
-    EXPECT_FALSE(book.changed());
-    EXPECT_EQ(book.num_orders(), 1U);
+class UnknownOrderTest : public BookTest<testing::TestWithParam<UnknownOrderCase>> {};
+
+TEST_P(UnknownOrderTest, RejectsAndLeavesBookUnchanged)
+{
+    buy("1", 1100, 100);
+    const auto applied = book.apply("2", GetParam().event);
+    ASSERT_FALSE(applied);
+    EXPECT_EQ(applied.error(), BookError::UnknownOrder);
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 100}, {}));
+    EXPECT_EQ(book.order_count(), 1U);
+}
+
+INSTANTIATE_TEST_SUITE_P(Events, UnknownOrderTest,
+                         testing::Values(UnknownOrderCase{"Decrease", DecreaseOrder{10}},
+                                         UnknownOrderCase{"Delete", DeleteOrder{}},
+                                         UnknownOrderCase{"Execute", ExecuteOrder{10}},
+                                         UnknownOrderCase{"Fill", FillOrder{}}),
+                         [](const testing::TestParamInfo<UnknownOrderCase>& info) {
+                             return std::string(info.param.name);
+                         });
+
+TEST_F(OrderBookTest, RejectsDuplicateAddAndLeavesBookUnchanged)
+{
+    buy("1", 1100, 100);
+
+    const auto applied = book.apply("1", AddOrder{.side = Side::Sell, .price = 1200, .shares = 10});
+    ASSERT_FALSE(applied);
+    EXPECT_EQ(applied.error(), BookError::DuplicateOrder);
+    EXPECT_EQ(book.bbo(), bbo(Level{1100, 100}, {}));
+    EXPECT_EQ(book.order_count(), 1U);
 
     // The ID is free again once the order is gone
-    book.remove("1");
-    book.sell("1", 1200, 10);
-    EXPECT_EQ(book.best_ask_bid(), std::make_pair(PQ(1200, 10), PQ()));
+    apply("1", DeleteOrder{});
+    sell("1", 1200, 10);
+    EXPECT_EQ(book.bbo(), bbo({}, Level{1200, 10}));
 }
 
 // NOLINTEND(readability-magic-numbers)
+
+} // namespace

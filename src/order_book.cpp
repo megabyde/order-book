@@ -1,127 +1,85 @@
-#include <order_book/order.hpp>
+#include <order_book/feed.hpp>
 #include <order_book/order_book.hpp>
 
-#include <cstdint>
-#include <memory>
-#include <stdexcept>
+#include <algorithm>
+#include <expected>
+#include <iterator>
 #include <string>
+#include <string_view>
+#include <variant>
 
 namespace order_book {
 
-/**
- * Add order of the given type, price and quantity
- */
-void OrderBook::add(const std::string& id, uint32_t price, uint64_t quantity, Order::Type type)
+std::expected<void, BookError> OrderBook::apply(std::string_view order, const Event& event)
 {
-    if (m_orders.contains(id)) {
-        throw std::invalid_argument("duplicate order '" + id + "'");
+    if (const auto* const add_order = std::get_if<AddOrder>(&event)) {
+        return add(order, *add_order);
+    }
+    if (std::holds_alternative<NoOp>(event)) {
+        return {};
     }
 
-    // Create a new order
-    const auto order = std::make_shared<Order>(id, type, price, quantity);
-    auto& side = order->is_buy() ? m_bids : m_asks;
-    auto& price_level = side[price];
-
-    // Add the order to the cache
-    m_orders[id] = order;
-    // Put the new order to the end of the price level
-    price_level.push_back(order);
-    // Recalculate best bid/ask
-    update();
-}
-
-/**
- * Resting order with the given ID
- */
-std::shared_ptr<Order> OrderBook::find(const std::string& id) const
-{
-    const auto it = m_orders.find(id);
-    if (it == m_orders.end()) {
-        throw std::invalid_argument("unknown order '" + id + "'");
+    const auto found = m_orders.find(order);
+    if (found == m_orders.end()) {
+        return std::unexpected(BookError::UnknownOrder);
     }
-    return it->second.lock();
+    const auto remaining = *found->second.order;
+    // D and F take the whole remaining quantity
+    auto quantity = remaining;
+    if (const auto* const decrease = std::get_if<DecreaseOrder>(&event)) {
+        if (decrease->shares >= remaining) {
+            return {};
+        }
+        quantity = remaining - decrease->shares;
+    }
+    else if (const auto* const execute = std::get_if<ExecuteOrder>(&event)) {
+        quantity = std::min(execute->shares, remaining);
+    }
+    reduce(found, quantity);
+    return {};
 }
 
-/**
- * Decrease the number of shares of the order to the given quantity
- */
-void OrderBook::decrease(const std::string& id, uint64_t quantity)
+Bbo OrderBook::bbo() const
 {
-    const auto order = find(id);
-    if (quantity >= order->quantity) {
+    Bbo bbo;
+    if (!m_bids.empty()) {
+        const auto& [price, level] = *std::prev(m_bids.end());
+        bbo.bid = Level{.price = price, .quantity = level.total};
+    }
+    if (!m_asks.empty()) {
+        const auto& [price, level] = *m_asks.begin();
+        bbo.ask = Level{.price = price, .quantity = level.total};
+    }
+    return bbo;
+}
+
+std::expected<void, BookError> OrderBook::add(std::string_view order, const AddOrder& add)
+{
+    const auto [entry, inserted] = m_orders.try_emplace(std::string(order));
+    if (!inserted) {
+        return std::unexpected(BookError::DuplicateOrder);
+    }
+    auto& levels = add.side == Side::Buy ? m_bids : m_asks;
+    const auto level = levels.try_emplace(add.price).first;
+    level->second.total += add.shares;
+    const auto resting = level->second.fifo.insert(level->second.fifo.end(), add.shares);
+    entry->second = Handle{.side = add.side, .level = level, .order = resting};
+    return {};
+}
+
+void OrderBook::reduce(Orders::iterator order, Quantity quantity)
+{
+    const auto& [side, level, resting] = order->second;
+    level->second.total -= quantity;
+    *resting -= quantity;
+    if (*resting != 0) {
         return;
     }
-    if (quantity == 0) {
-        remove(id);
-        return;
+    level->second.fifo.erase(resting);
+    if (level->second.fifo.empty()) {
+        (side == Side::Buy ? m_bids : m_asks).erase(level);
     }
-    order->quantity = quantity;
-    // Recalculate best bid/ask
-    update();
-}
-
-/**
- * Delete the order
- */
-void OrderBook::remove(const std::string& id)
-{
-    const auto order = find(id);
-    auto& side = order->is_buy() ? m_bids : m_asks;
-    auto& price_level = side[order->price];
-
-    // Delete our order from the price level
-    price_level.remove(id);
-    // If it was the last order, drop the price level
-    if (price_level.empty()) {
-        side.erase(order->price);
-    }
-    // Finally, delete the order from the cache
-    m_orders.erase(id);
-    // Recalculate best bid/ask
-    update();
-}
-
-/**
- * Execute given quantity of shares of the order.
- * If less amount of shares is available in the order, execute the rest.
- */
-void OrderBook::execute(const std::string& id, uint64_t quantity)
-{
-    const auto order = find(id);
-    if (quantity >= order->quantity) {
-        remove(id);
-        return;
-    }
-    order->quantity -= quantity;
-    // Recalculate best bid/ask
-    update();
-}
-
-/**
- * Fill the order completely
- */
-void OrderBook::fill(const std::string& id)
-{
-    remove(id);
-}
-
-/**
- * Recalculate best ask and bid
- */
-void OrderBook::update()
-{
-    // The lowest sell price level
-    const auto a = m_asks.begin();
-    const auto best_ask = a != m_asks.end() ? PQ(a->first, a->second.quantity()) : PQ();
-    // The highest (inverse order) buy price
-    const auto b = m_bids.rbegin();
-    const auto best_bid = b != m_bids.rend() ? PQ(b->first, b->second.quantity()) : PQ();
-
-    if (m_best_ask != best_ask || m_best_bid != best_bid) {
-        m_changed = true;
-        m_best_ask = best_ask;
-        m_best_bid = best_bid;
-    }
+    m_orders.erase(order);
 }
 
 } // namespace order_book

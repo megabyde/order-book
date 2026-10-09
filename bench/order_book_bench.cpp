@@ -1,4 +1,4 @@
-#include <order_book/event.hpp>
+#include <order_book/feed.hpp>
 #include <order_book/order_book.hpp>
 #include <order_book/replay.hpp>
 
@@ -19,12 +19,15 @@
 
 namespace {
 
-using order_book::Event;
+using order_book::AddOrder;
+using order_book::DeleteOrder;
+using order_book::ExecuteOrder;
 using order_book::OrderBook;
+using order_book::Side;
 
-constexpr uint32_t mid_price = 100000;
-constexpr uint32_t tick = 100;
-constexpr uint64_t lot = 100;
+constexpr order_book::Price mid_price = 100000;
+constexpr order_book::Price tick = 100;
+constexpr order_book::Quantity lot = 100;
 
 // Discards everything written to it, so BM_Replay still pays for formatting the output
 class NullBuffer : public std::streambuf {
@@ -47,7 +50,7 @@ void BM_ParseLine(benchmark::State& state)
 {
     const std::string line = "57240167,PRU,9871234,B,100,1172400,,Q";
     for (const auto _ : state) {
-        benchmark::DoNotOptimize(Event(line));
+        benchmark::DoNotOptimize(order_book::parse_line(line));
     }
     state.SetItemsProcessed(state.iterations());
 }
@@ -63,16 +66,15 @@ void BM_AddDelete(benchmark::State& state)
     OrderBook book;
     for (const auto _ : state) {
         for (std::size_t i = 0; i < count; ++i) {
-            const auto offset = static_cast<uint32_t>((i / 2 % levels) + 1) * tick;
-            if (i % 2 == 0) {
-                book.buy(ids[i], mid_price - offset, lot);
-            }
-            else {
-                book.sell(ids[i], mid_price + offset, lot);
-            }
+            const auto offset = static_cast<order_book::Price>((i / 2 % levels) + 1) * tick;
+            const auto add =
+                i % 2 == 0
+                    ? AddOrder{.side = Side::Buy, .price = mid_price - offset, .shares = lot}
+                    : AddOrder{.side = Side::Sell, .price = mid_price + offset, .shares = lot};
+            benchmark::DoNotOptimize(book.apply(ids[i], add));
         }
         for (const auto& id : std::views::reverse(ids)) {
-            book.remove(id);
+            benchmark::DoNotOptimize(book.apply(id, DeleteOrder{}));
         }
     }
     state.SetItemsProcessed(state.iterations() * 2 * state.range(0));
@@ -88,11 +90,12 @@ void BM_ExecuteFront(benchmark::State& state)
     OrderBook book;
     for (const auto _ : state) {
         for (const auto& id : ids) {
-            book.buy(id, mid_price, lot);
+            benchmark::DoNotOptimize(
+                book.apply(id, AddOrder{.side = Side::Buy, .price = mid_price, .shares = lot}));
         }
         for (const auto& id : ids) {
-            book.execute(id, lot / 2);
-            book.execute(id, lot / 2);
+            benchmark::DoNotOptimize(book.apply(id, ExecuteOrder{lot / 2}));
+            benchmark::DoNotOptimize(book.apply(id, ExecuteOrder{lot / 2}));
         }
     }
     state.SetItemsProcessed(state.iterations() * 3 * state.range(0));
