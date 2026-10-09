@@ -1,9 +1,11 @@
 #pragma once
 
-#include <cassert>
+#include <charconv>
 #include <cstdint>
-#include <iostream>
+#include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <order_book/utils.hpp>
@@ -27,21 +29,28 @@ struct Event {
     };
 
     Event() = delete;
-    /// Parse one feed line
+    /// Parse one feed line: `Time,Ticker,Order,T,Shares,Price`, then any extra columns
+    ///
+    /// Throws std::invalid_argument naming the offending field if the line has fewer than six
+    /// fields, a field is not an unsigned decimal integer in range, or the type is not one of
+    /// BSCDEFTX.
     explicit Event(const std::string& s)
     {
-        auto fields = split(s);
-        assert(fields.size() >= 6);
+        const auto fields = split(s);
+        if (fields.size() < 6) { // NOLINT(readability-magic-numbers)
+            throw std::invalid_argument("expected at least 6 fields, got " +
+                                        std::to_string(fields.size()));
+        }
 
-        // We parse using the following format:
-        // Time,Ticker,Order,T,Shares,Price,...
-        time = std::stoull(fields[0]);
+        time = parse_uint<uint64_t>(fields[0], "time");
         ticker = fields[1];
         order = fields[2];
-        assert(fields[3].length() == 1);
+        if (fields[3].size() != 1 || !std::string_view("BSCDEFTX").contains(fields[3][0])) {
+            throw std::invalid_argument("unknown message type '" + fields[3] + "'");
+        }
         type = static_cast<Type>(fields[3][0]);
-        shares = std::stoul(fields[4]);
-        price = std::stoul(fields[5]); // NOLINT(readability-magic-numbers)
+        shares = parse_uint<uint32_t>(fields[4], "shares");
+        price = parse_uint<uint32_t>(fields[5], "price"); // NOLINT(readability-magic-numbers)
     }
 
     // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
@@ -52,6 +61,22 @@ struct Event {
     uint32_t shares;    ///< Quantity of shares
     uint32_t price;     ///< Order price in 100th of a penny
     // NOLINTEND(misc-non-private-member-variables-in-classes)
+
+private:
+    template <typename T> static T parse_uint(const std::string& text, const char* name)
+    {
+        T value{};
+        const auto* const end = text.data() + text.size();
+        const auto [ptr, ec] = std::from_chars(text.data(), end, value);
+        if (ec == std::errc::result_out_of_range) {
+            throw std::invalid_argument(std::string(name) + " out of range: '" + text + "'");
+        }
+        if (ec != std::errc{} || ptr != end) {
+            throw std::invalid_argument(std::string(name) + " is not an unsigned integer: '" +
+                                        text + "'");
+        }
+        return value;
+    }
 };
 
 } // namespace order_book

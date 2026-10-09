@@ -209,7 +209,8 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     include(GoogleTest)
     add_executable(
-        order_book_test tests/order_book_test.cpp tests/split_test.cpp tests/utils_test.cpp
+        order_book_test tests/event_test.cpp tests/order_book_test.cpp tests/split_test.cpp
+                        tests/utils_test.cpp
     )
     target_link_libraries(order_book_test PRIVATE order_book_lib GTest::gtest_main)
     enable_project_options(order_book_test)
@@ -217,9 +218,28 @@ if(BUILD_TESTING)
     gtest_discover_tests(order_book_test DISCOVERY_MODE PRE_TEST)
 
     # End-to-end tests: together they cover all of src/main.cpp, including under the sanitizer and
-    # coverage presets.
-    add_test(NAME AppTest.PrintsUsage COMMAND order_book)
-    set_tests_properties(AppTest.PrintsUsage PROPERTIES PASS_REGULAR_EXPRESSION "Usage: .* FILE")
+    # coverage presets. The error cases check the exit code and the diagnostic separately: the code
+    # alone does not prove which error branch ran, and PASS_REGULAR_EXPRESSION ignores the code.
+    function(add_app_error_test name exit pattern)
+        add_test(
+            NAME AppTest.${name}
+            COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DINPUT=${ARGN} -DEXIT=${exit}
+                    "-DPATTERN=${pattern}" -P ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+        )
+    endfunction()
+    add_app_error_test(PrintsUsage 2 "Usage: .* FILE")
+    add_app_error_test(
+        RejectsMissingFile 1 "error: cannot open '.*missing.csv'" ${PROJECT_BINARY_DIR}/missing.csv
+    )
+
+    function(add_rejected_input_test name message)
+        add_app_error_test(
+            Rejects_${name} 1 "error: line ${message}" ${PROJECT_SOURCE_DIR}/tests/data/${name}.csv
+        )
+    endfunction()
+    add_rejected_input_test(malformed "3: price is not an unsigned integer: '12a'")
+    add_rejected_input_test(unknown_order "3: unknown order '7'")
+    add_rejected_input_test(duplicate_order "3: duplicate order '1'")
 
     add_test(
         NAME AppTest.ReplaysSample
@@ -230,4 +250,23 @@ if(BUILD_TESTING)
             -DACTUAL=${PROJECT_BINARY_DIR}/sample.actual -P
             ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
     )
+
+    # Differential tests against the independent Python model of the feed semantics. Skipped when no
+    # Python interpreter is found; the scripts need only the standard library.
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        function(add_differential_test name events tickers seed)
+            add_test(
+                NAME Differential.${name}
+                COMMAND
+                    ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DPYTHON=${Python3_EXECUTABLE}
+                    -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+                    -DWORK=${PROJECT_BINARY_DIR}/differential_${name} -DEVENTS=${events}
+                    -DTICKERS=${tickers} -DSEED=${seed} -P
+                    ${PROJECT_SOURCE_DIR}/tests/differential.cmake
+            )
+        endfunction()
+        add_differential_test(Default 50000 8 1)
+        add_differential_test(Large 200000 20 2)
+    endif()
 endif()

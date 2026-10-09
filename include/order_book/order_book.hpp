@@ -13,7 +13,11 @@
 namespace order_book {
 
 /**
- * Order book for a particular symbol
+ * Order book for a particular symbol, replayed from the exchange's own feed
+ *
+ * The exchange has already matched the orders: each message applies to the resting order it
+ * names, and the book never matches orders itself. A message naming an unknown order, or an add
+ * reusing a live ID, throws std::invalid_argument and leaves the book unchanged.
  */
 class OrderBook {
 public:
@@ -27,11 +31,11 @@ public:
     {
         add(id, price, quantity, Order::Type::Sell);
     }
-    /// Decrease the number of shares of the order to the given quantity
+    /// Decrease the order to the given quantity; no-op unless smaller, removes the order at 0
     void decrease(const std::string& id, uint64_t quantity);
     /// Delete the order
     void remove(const std::string& id);
-    /// Execute given quantity of shares of the order
+    /// Execute given quantity of shares of the order, clamped to what remains; removes it at 0
     void execute(const std::string& id, uint64_t quantity);
     /// Fill the order completely
     void fill(const std::string& id);
@@ -77,6 +81,8 @@ public:
 private:
     // Recalculate best ask and bid
     void update();
+    // Resting order with the given ID; throws std::invalid_argument if there is none
+    [[nodiscard]] std::shared_ptr<Order> find(const std::string& id) const;
     // Add order of the given type, price and quantity
     void add(const std::string& id, uint32_t price, uint64_t quantity, Order::Type type);
 
