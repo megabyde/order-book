@@ -148,7 +148,7 @@ endfunction()
 # Non-main code lives in a library so the application and the tests link the same artifact instead
 # of recompiling sources. Include dirs and the language standard are PUBLIC so both consumers
 # inherit them.
-add_library(order_book_lib STATIC src/order_book.cpp src/split.cpp)
+add_library(order_book_lib STATIC src/order_book.cpp src/replay.cpp src/split.cpp)
 target_include_directories(order_book_lib PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(order_book_lib PUBLIC cxx_std_23)
 enable_project_options(order_book_lib)
@@ -209,8 +209,8 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     include(GoogleTest)
     add_executable(
-        order_book_test tests/event_test.cpp tests/order_book_test.cpp tests/split_test.cpp
-                        tests/utils_test.cpp
+        order_book_test tests/event_test.cpp tests/order_book_test.cpp tests/replay_test.cpp
+                        tests/split_test.cpp tests/utils_test.cpp
     )
     target_link_libraries(order_book_test PRIVATE order_book_lib GTest::gtest_main)
     enable_project_options(order_book_test)

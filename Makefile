@@ -165,7 +165,7 @@ coverage-report: coverage ## Generate an HTML coverage report and enforce the li
 	$(call require-tool,python3)
 	mkdir -p $(COVERAGE_DIR)/coverage-report
 	python3 -m gcovr --root . --gcov-executable "$(GCOV_EXECUTABLE)" \
-		--filter 'include/' --filter 'src/' --exclude 'tests/' \
+		--filter 'include/' --filter 'src/' --exclude 'tests/' --merge-lines \
 		--html-details $(COVERAGE_DIR)/coverage-report/index.html \
 		--cobertura $(COVERAGE_DIR)/coverage.xml \
 		--txt-summary --fail-under-line $(COVERAGE_FAIL_UNDER) \
