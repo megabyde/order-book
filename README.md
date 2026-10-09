@@ -73,9 +73,9 @@ Required:
 
 - [CMake](https://cmake.org/download/) 3.29+ (for workflow presets and `CMAKE_LINKER_TYPE`)
 - [Conan](https://docs.conan.io/2/installation.html) 2.25+ (for the `CMakeConfigDeps` generator)
-- A compiler and standard library with C++23 `std::ranges::to` support
+- A compiler and standard library with C++23 `std::expected` support
   - [GCC](https://gcc.gnu.org/) 14+
-  - [LLVM Clang](https://llvm.org/) 17+ with libc++ 17+ or libstdc++ 14+
+  - [LLVM Clang](https://llvm.org/) 19+ with libstdc++ 14+, or 17+ with libc++ 17+
   - [Apple Clang](https://developer.apple.com/xcode/) 17+ on macOS
   - [MSVC](https://visualstudio.microsoft.com/) 2022 (17.10+) on Windows
 
