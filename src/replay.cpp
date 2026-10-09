@@ -1,100 +1,90 @@
-#include <order_book/event.hpp>
-#include <order_book/order.hpp>
+#include <order_book/feed.hpp>
 #include <order_book/order_book.hpp>
 #include <order_book/replay.hpp>
 
 #include <cstddef>
-#include <cstdint>
+#include <format>
+#include <functional>
+#include <ios>
 #include <istream>
+#include <iterator>
+#include <optional>
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace order_book {
 
 namespace {
 
-void print(std::ostream& os, uint64_t time, const std::string& ticker, PQ best_ask, PQ best_bid)
+void append_level(std::string& buffer, const std::optional<Level>& level)
 {
-    os << time << ',' << ticker << ',';
-    if (best_bid.price != 0) {
-        os << best_bid;
+    if (level) {
+        std::format_to(std::back_inserter(buffer), "{},{}", level->price, level->quantity);
     }
     else {
-        os << ',';
+        buffer += ',';
     }
-    os << ',';
-    if (best_ask.price != 0) {
-        os << best_ask;
-    }
-    else {
-        os << ',';
-    }
-    os << '\n';
+}
+
+std::string describe(BookError error, std::string_view order)
+{
+    return std::format("{} order '{}'",
+                       error == BookError::DuplicateOrder ? "duplicate" : "unknown", order);
+}
+
+std::invalid_argument line_error(std::size_t number, std::string_view message)
+{
+    const auto what = std::format("line {}: {}", number, message);
+    return std::invalid_argument(what);
 }
 
 } // namespace
 
 std::size_t replay(std::istream& in, std::ostream& out)
 {
-    // Order books for each symbol
-    std::unordered_map<std::string, OrderBook> books;
-
+    std::unordered_map<std::string, OrderBook, StringHash, std::equal_to<>> books;
     std::string line;
+    std::string buffer;
     std::size_t number = 1;
     std::size_t events = 0;
+
     // Skip the header
-    getline(in, line);
-    while (getline(in, line)) {
+    std::getline(in, line);
+    while (std::getline(in, line)) {
         ++number;
         if (line.ends_with('\r')) {
             line.pop_back();
         }
-        // Skip empty strings
         if (line.find_last_not_of(" \t\n\v\f\r") == std::string::npos) {
             continue;
         }
 
-        try {
-            // Parse event message
-            const Event event(line);
-            // Get the order book for this symbol
-            auto& book = books[event.ticker];
-
-            switch (event.type) {
-            case Event::Type::Buy:
-                book.buy(event.order, event.price, event.shares);
-                break;
-            case Event::Type::Sell:
-                book.sell(event.order, event.price, event.shares);
-                break;
-            case Event::Type::Decrease:
-                book.decrease(event.order, event.shares);
-                break;
-            case Event::Type::Delete:
-                book.remove(event.order);
-                break;
-            case Event::Type::Execute:
-                book.execute(event.order, event.shares);
-                break;
-            case Event::Type::Fill:
-                book.fill(event.order);
-                break;
-            default:
-                // Trades and cross-trades don't affect the order book
-                break;
-            }
-
-            if (book.changed()) {
-                const auto ask_bid = book.best_ask_bid();
-                print(out, event.time, event.ticker, ask_bid.first, ask_bid.second);
-            }
-            ++events;
+        const auto message = parse_line(line);
+        if (!message) {
+            throw line_error(number, message.error());
         }
-        catch (const std::invalid_argument& error) {
-            throw std::invalid_argument("line " + std::to_string(number) + ": " + error.what());
+        auto book = books.find(message->ticker);
+        if (book == books.end()) {
+            book = books.emplace(std::string(message->ticker), OrderBook{}).first;
         }
+
+        const auto before = book->second.bbo();
+        if (const auto applied = book->second.apply(message->order, message->event); !applied) {
+            throw line_error(number, describe(applied.error(), message->order));
+        }
+        if (const auto after = book->second.bbo(); after != before) {
+            buffer.clear();
+            std::format_to(std::back_inserter(buffer), "{},{},", message->time, message->ticker);
+            append_level(buffer, after.bid);
+            buffer += ',';
+            append_level(buffer, after.ask);
+            buffer += '\n';
+            out.write(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        }
+        ++events;
     }
     return events;
 }

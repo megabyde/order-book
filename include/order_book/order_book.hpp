@@ -1,100 +1,90 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <expected>
 #include <functional>
-#include <iostream>
+#include <list>
 #include <map>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
-#include <order_book/event.hpp>
-#include <order_book/order.hpp>
-#include <order_book/price_level.hpp>
+#include <order_book/feed.hpp>
 
 namespace order_book {
 
+/// Hash that lets string-keyed unordered containers look up a std::string_view without a copy
+struct StringHash {
+    using is_transparent = void; ///< Enables heterogeneous lookup
+    /// Hash of the characters, equal for a std::string and a view of it
+    [[nodiscard]] std::size_t operator()(std::string_view text) const noexcept
+    {
+        return std::hash<std::string_view>{}(text);
+    }
+};
+
+/// Price and total resting quantity of one level
+struct Level {
+    Price price;       ///< Level price
+    Quantity quantity; ///< Sum of the remaining quantity of every order at this price
+    /// Same price and quantity
+    friend bool operator==(const Level&, const Level&) = default;
+};
+
+/// Best bid and offer; an empty side has no level
+struct Bbo {
+    std::optional<Level> bid; ///< Highest bid level
+    std::optional<Level> ask; ///< Lowest ask level
+    /// Same levels on both sides
+    friend bool operator==(const Bbo&, const Bbo&) = default;
+};
+
+/// Why OrderBook::apply() rejected a message
+enum class BookError : std::uint8_t {
+    DuplicateOrder, ///< An add reuses the ID of a live order
+    UnknownOrder,   ///< C/D/E/F names no live order
+};
+
 /**
- * Order book for a particular symbol, replayed from the exchange's own feed
+ * Order book for one ticker, replayed from the exchange's own feed
  *
  * The exchange has already matched the orders: each message applies to the resting order it
- * names, and the book never matches orders itself. A message naming an unknown order, or an add
- * reusing a live ID, throws std::invalid_argument and leaves the book unchanged.
+ * names, and the book never matches orders itself. Each price level keeps its orders in arrival
+ * order and a running total, and every order is reachable from its ID in constant time.
  */
 class OrderBook {
 public:
-    /// Add new buy order at the price and quantity of shares
-    void buy(const std::string& id, uint32_t price, uint64_t quantity)
-    {
-        add(id, price, quantity, Order::Type::Buy);
-    }
-    /// Add new sell order at the price and quantity of shares
-    void sell(const std::string& id, uint32_t price, uint64_t quantity)
-    {
-        add(id, price, quantity, Order::Type::Sell);
-    }
-    /// Decrease the order to the given quantity; no-op unless smaller, removes the order at 0
-    void decrease(const std::string& id, uint64_t quantity);
-    /// Delete the order
-    void remove(const std::string& id);
-    /// Execute given quantity of shares of the order, clamped to what remains; removes it at 0
-    void execute(const std::string& id, uint64_t quantity);
-    /// Fill the order completely
-    void fill(const std::string& id);
-
-    /// Number of resting sell orders
-    [[nodiscard]] size_t num_ask_orders() const
-    {
-        size_t total = 0;
-        for (const auto& kv : m_asks) {
-            total += kv.second.size();
-        }
-        return total;
-    }
-    /// Number of resting buy orders
-    [[nodiscard]] size_t num_bid_orders() const
-    {
-        size_t total = 0;
-        for (const auto& kv : m_bids) {
-            total += kv.second.size();
-        }
-        return total;
-    }
+    /// Apply `event` to the order with ID `order`; on error the book is unchanged
+    [[nodiscard]] std::expected<void, BookError> apply(std::string_view order, const Event& event);
+    /// Current best bid and offer
+    [[nodiscard]] Bbo bbo() const;
     /// Number of resting orders on both sides
-    [[nodiscard]] size_t num_orders() const { return num_ask_orders() + num_bid_orders(); }
-    /// Number of sell price levels
-    [[nodiscard]] size_t num_ask_price_levels() const { return m_asks.size(); }
-    /// Number of buy price levels
-    [[nodiscard]] size_t num_bid_price_levels() const { return m_bids.size(); }
+    [[nodiscard]] std::size_t order_count() const { return m_orders.size(); }
     /// Number of price levels on both sides
-    [[nodiscard]] size_t num_price_levels() const
-    {
-        return num_ask_price_levels() + num_bid_price_levels();
-    }
-    /// Whether the best ask or bid changed since the last best_ask_bid() call
-    [[nodiscard]] bool changed() const { return m_changed; }
-    /// Best ask and bid (inner market); clears the changed() flag
-    std::pair<PQ, PQ> best_ask_bid()
-    {
-        m_changed = false;
-        return std::make_pair(m_best_ask, m_best_bid);
-    }
+    [[nodiscard]] std::size_t level_count() const { return m_bids.size() + m_asks.size(); }
 
 private:
-    // Recalculate best ask and bid
-    void update();
-    // Resting order with the given ID; throws std::invalid_argument if there is none
-    [[nodiscard]] std::shared_ptr<Order> find(const std::string& id) const;
-    // Add order of the given type, price and quantity
-    void add(const std::string& id, uint32_t price, uint64_t quantity, Order::Type type);
+    struct PriceLevel {
+        Quantity total = 0;
+        std::list<Quantity> fifo;
+    };
+    using Levels = std::map<Price, PriceLevel>;
+    // Where an order rests; std::map and std::list iterators survive inserts and erases elsewhere
+    struct Handle {
+        Side side;
+        Levels::iterator level;
+        std::list<Quantity>::iterator order;
+    };
+    using Orders = std::unordered_map<std::string, Handle, StringHash, std::equal_to<>>;
 
-    // Price levels for both buy/sell sides
-    std::map<uint32_t, PriceLevel> m_asks, m_bids;
-    // Cache for fast order access using ID.
-    // We use weak pointers since the cache doesn't 'own' m_orders
-    std::unordered_map<std::string, std::weak_ptr<Order>> m_orders;
-    // Current best ask and bid
-    PQ m_best_ask, m_best_bid;
-    // Flag indicating best ask/bid change
-    bool m_changed = false;
+    std::expected<void, BookError> add(std::string_view order, const AddOrder& add);
+    // Take `quantity` off the order, removing it and then its level once they reach 0
+    void reduce(Orders::iterator order, Quantity quantity);
+
+    Levels m_bids, m_asks;
+    Orders m_orders;
 };
 
 } // namespace order_book
