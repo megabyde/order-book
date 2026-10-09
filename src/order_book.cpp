@@ -1,9 +1,9 @@
-#include "order_book/order.hpp"
-#include <algorithm>
-#include <cassert>
+#include <order_book/order.hpp>
+#include <order_book/order_book.hpp>
+
 #include <cstdint>
 #include <memory>
-#include <order_book/order_book.hpp>
+#include <stdexcept>
 #include <string>
 
 namespace order_book {
@@ -13,11 +13,9 @@ namespace order_book {
  */
 void OrderBook::add(const std::string& id, uint32_t price, uint64_t quantity, Order::Type type)
 {
-#ifndef NDEBUG
-    // Check for duplicate add
-    const auto it = m_orders.find(id);
-    assert(it == m_orders.end());
-#endif
+    if (m_orders.contains(id)) {
+        throw std::invalid_argument("duplicate order '" + id + "'");
+    }
 
     // Create a new order
     const auto order = std::make_shared<Order>(id, type, price, quantity);
@@ -33,20 +31,31 @@ void OrderBook::add(const std::string& id, uint32_t price, uint64_t quantity, Or
 }
 
 /**
+ * Resting order with the given ID
+ */
+std::shared_ptr<Order> OrderBook::find(const std::string& id) const
+{
+    const auto it = m_orders.find(id);
+    if (it == m_orders.end()) {
+        throw std::invalid_argument("unknown order '" + id + "'");
+    }
+    return it->second.lock();
+}
+
+/**
  * Decrease the number of shares of the order to the given quantity
  */
 void OrderBook::decrease(const std::string& id, uint64_t quantity)
 {
-    const auto it = m_orders.find(id);
-    if (it == m_orders.end()) {
+    const auto order = find(id);
+    if (quantity >= order->quantity) {
         return;
     }
-
-    assert(!it->second.expired());
-    const auto order = it->second.lock();
-    // Update the order
-    assert(quantity > 0);
-    order->quantity = std::min(quantity, order->quantity);
+    if (quantity == 0) {
+        remove(id);
+        return;
+    }
+    order->quantity = quantity;
     // Recalculate best bid/ask
     update();
 }
@@ -56,13 +65,7 @@ void OrderBook::decrease(const std::string& id, uint64_t quantity)
  */
 void OrderBook::remove(const std::string& id)
 {
-    const auto it = m_orders.find(id);
-    if (it == m_orders.end()) {
-        return;
-    }
-
-    assert(!it->second.expired());
-    const auto order = it->second.lock();
+    const auto order = find(id);
     auto& side = order->is_buy() ? m_bids : m_asks;
     auto& price_level = side[order->price];
 
@@ -73,7 +76,7 @@ void OrderBook::remove(const std::string& id)
         side.erase(order->price);
     }
     // Finally, delete the order from the cache
-    m_orders.erase(it);
+    m_orders.erase(id);
     // Recalculate best bid/ask
     update();
 }
@@ -84,53 +87,12 @@ void OrderBook::remove(const std::string& id)
  */
 void OrderBook::execute(const std::string& id, uint64_t quantity)
 {
-    const auto it = m_orders.find(id);
-    if (it == m_orders.end()) {
+    const auto order = find(id);
+    if (quantity >= order->quantity) {
+        remove(id);
         return;
     }
-
-    assert(!it->second.expired());
-    const auto order = it->second.lock();
-    quantity = std::min(quantity, order->quantity);
-
-    // For buy orders, we need to match with asks and vice versa
-    const auto& side = order->is_buy() ? m_asks : m_bids;
-    // We start from the lowest sell price
-    auto lowest = m_asks.begin();
-    // We start from highest buy price
-    auto highest = m_bids.end();
-    if (!m_bids.empty()) {
-        --highest;
-    }
-    while (quantity > 0 && order->quantity > 0 && !side.empty()) {
-        auto& price_level = order->is_buy() ? lowest->second : highest->second;
-        auto* oldest = price_level.front().get();
-        // We have enough shares on the oldest order
-        if (oldest->quantity > quantity) {
-            oldest->quantity -= quantity;
-            order->quantity -= quantity;
-            break;
-        }
-
-        order->quantity -= oldest->quantity;
-        quantity -= oldest->quantity;
-
-        m_orders.erase(oldest->id);
-        price_level.pop_front();
-        // If the price level is empty, delete it and go to the next one
-        if (price_level.empty()) {
-            if (order->is_buy()) {
-                m_asks.erase(lowest++);
-            }
-            else {
-                m_bids.erase(highest--);
-            }
-        }
-    }
-    // Remove our order if it was fully filled
-    if (order->quantity == 0) {
-        remove(id);
-    }
+    order->quantity -= quantity;
     // Recalculate best bid/ask
     update();
 }
@@ -140,14 +102,7 @@ void OrderBook::execute(const std::string& id, uint64_t quantity)
  */
 void OrderBook::fill(const std::string& id)
 {
-    const auto it = m_orders.find(id);
-    if (it == m_orders.end()) {
-        return;
-    }
-
-    assert(!it->second.expired());
-    const auto order = it->second.lock();
-    execute(id, order->quantity);
+    remove(id);
 }
 
 /**
