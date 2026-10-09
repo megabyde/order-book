@@ -31,6 +31,7 @@ public build interface, and the workflow presets are what CI runs.
   and `make format-check` fails instead.
 - `make lock` regenerates `conan.lock`; `make lock-check` is the CI guard.
 - `make docs` generates the Doxygen HTML.
+- `make bench` runs the release benchmarks; see [Benchmarks](docs/development.md#benchmarks).
 
 Run `make format`, then the workflow preset matching the change, then `make lint` before commit.
 `make bootstrap` installs Conan dependencies for debug and release; sanitizer trees need

@@ -29,7 +29,8 @@ This repository uses:
 
 - [CMake](https://cmake.org) configure, build, and test presets as the public build interface
 - [Conan 2](https://conan.io) for dependency management
-- [GoogleTest](https://github.com/google/googletest) via Conan
+- [GoogleTest](https://github.com/google/googletest) and
+  [Google Benchmark](https://github.com/google/benchmark) via Conan
 - [Doxygen](https://www.doxygen.nl) for generated API documentation
 
 ## Operating model

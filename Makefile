@@ -51,13 +51,15 @@ CONAN_PROFILE ?= profiles/default
 STAMP_DIR := build/.stamps
 COVERAGE_DIR := build/coverage
 COVERAGE_FAIL_UNDER ?= 100
+BENCH_FEED := build/bench/feed.csv
+BENCH_ARGS ?= --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 SANITIZE_STAMPS := \
 	$(STAMP_DIR)/sanitize.stamp \
 	$(STAMP_DIR)/sanitize-asan.stamp \
 	$(STAMP_DIR)/sanitize-ubsan.stamp
-FORMAT_SOURCES = $(shell find include src tests -type f \( -name '*.hpp' -o -name '*.cpp' \))
+FORMAT_SOURCES = $(shell find include src tests bench -type f \( -name '*.hpp' -o -name '*.cpp' \))
 CMAKE_FORMAT_SOURCES = CMakeLists.txt
-TIDY_SOURCES = $(shell find src tests -type f -name '*.cpp')
+TIDY_SOURCES = $(shell find src tests bench -type f -name '*.cpp')
 # Tracked Markdown/JSON/YAML only; conan.lock is Conan-generated, so its formatting is
 # Conan's, not prettier's.
 PRETTIER_SOURCES = $(shell git ls-files '*.md' '*.json' '*.yml' '*.yaml' ':!conan.lock')
@@ -120,6 +122,11 @@ bootstrap: $(STAMP_DIR)/debug.stamp $(STAMP_DIR)/release.stamp ## Install Conan 
 .PHONY: bootstrap-sanitize
 bootstrap-sanitize: $(SANITIZE_STAMPS) ## Install sanitizer-instrumented Conan dependencies
 
+$(BENCH_FEED): scripts/gen_feed.py
+	$(call require-tool,python3)
+	mkdir -p $(@D)
+	python3 scripts/gen_feed.py --events 1000000 --tickers 8 --seed 1 -o $@
+
 # ---------------------------------------------------------------------------
 # Build + test via workflow presets
 # ---------------------------------------------------------------------------
@@ -140,6 +147,12 @@ sanitize-ubsan: ## Build and test via the UBSan workflow preset
 
 .PHONY: coverage
 coverage: coverage-data-clean ## Build and test via the coverage workflow preset
+
+.PHONY: bench
+bench: $(STAMP_DIR)/release.stamp $(BENCH_FEED) ## Run the release benchmarks; ORDER_BOOK_REPLAY_CSV overrides the feed
+	cmake --preset release
+	cmake --build --preset release --target order_book_bench
+	ORDER_BOOK_REPLAY_CSV="$${ORDER_BOOK_REPLAY_CSV:-$(BENCH_FEED)}" build/release/order_book_bench $(BENCH_ARGS)
 
 .PHONY: docs
 docs: $(STAMP_DIR)/debug.stamp ## Generate Doxygen HTML documentation
@@ -165,7 +178,7 @@ coverage-report: coverage ## Generate an HTML coverage report and enforce the li
 	$(call require-tool,python3)
 	mkdir -p $(COVERAGE_DIR)/coverage-report
 	python3 -m gcovr --root . --gcov-executable "$(GCOV_EXECUTABLE)" \
-		--filter 'include/' --filter 'src/' --exclude 'tests/' \
+		--filter 'include/' --filter 'src/' --exclude 'tests/' --merge-lines \
 		--html-details $(COVERAGE_DIR)/coverage-report/index.html \
 		--cobertura $(COVERAGE_DIR)/coverage.xml \
 		--txt-summary --fail-under-line $(COVERAGE_FAIL_UNDER) \
