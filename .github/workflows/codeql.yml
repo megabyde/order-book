@@ -32,7 +32,7 @@ jobs:
       - name: Load CI env
         run: cat .github/ci.env >> "$GITHUB_ENV"
       - run: sudo apt-get update && sudo apt-get install -y gcc-14 g++-14
-      - uses: github/codeql-action/init@v4.37.9
+      - uses: github/codeql-action/init@v4.38.2
         with:
           languages: c-cpp
       - uses: conan-io/setup-conan@v1
@@ -40,4 +40,4 @@ jobs:
           version: ${{ env.CONAN_VERSION }}
           cache_packages: true
       - run: make release
-      - uses: github/codeql-action/analyze@v4.37.9
+      - uses: github/codeql-action/analyze@v4.38.2
