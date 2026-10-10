@@ -59,7 +59,7 @@ void BM_ParseLine(benchmark::State& state)
 BENCHMARK(BM_ParseLine);
 
 // Adds range(0) orders alternating sides over 16 price levels per side, then deletes them newest
-// first, which is the far end of each level's FIFO
+// first
 void BM_AddDelete(benchmark::State& state)
 {
     constexpr std::size_t levels = 16;
@@ -83,7 +83,7 @@ void BM_AddDelete(benchmark::State& state)
 }
 BENCHMARK(BM_AddDelete)->Range(64, 4096);
 
-// Rests range(0) buy orders at one price, then executes each in FIFO order in two halves, so
+// Rests range(0) buy orders at one price, then executes each in the order added in two halves, so
 // every event changes the best bid's quantity
 void BM_ExecuteFront(benchmark::State& state)
 {
