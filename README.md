@@ -12,7 +12,7 @@
 
 `order_book` replays one trading day of an equity exchange's event feed and prints the best bid and
 offer (BBO) of a ticker each time it changes. It keeps one book per ticker: each side is a sorted set
-of price levels, and each level holds its orders in arrival order.
+of price levels, and each level holds the total quantity of its orders.
 
 ### Input
 
@@ -69,9 +69,10 @@ The library in `include/order_book/` has three parts:
   event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
   that knows the line format.
 - [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book. Each side is a
-  `std::map` from price to a level holding a running total and a `std::list` of orders, and an index
-  from order ID to stable iterators finds any order in one hash lookup. An event costs that lookup,
-  plus a level lookup for an add, whatever the depth of the level.
+  `std::map` from price to a level holding a running total and an order count. Orders live in a
+  `std::vector` that reuses removed positions, and an open-addressing index from order ID to position
+  finds any order in one hash lookup. An event costs that lookup, plus a level lookup for an add,
+  whatever the depth of the level.
 - [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
   feed, keeps a book per ticker, and writes a line whenever a BBO changes. The application opens the
   file and calls it, and so does the replay benchmark.
