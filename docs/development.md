@@ -78,12 +78,16 @@ make bench
 ```
 
 The first run writes two seeded feeds with [`scripts/gen_feed.py`](../scripts/gen_feed.py), and
-`BM_Replay/<path>` replays each through the same `order_book::replay()` the application uses:
+`BM_Replay/<path>/threads:N` replays each through the same `order_book::replay()` the application
+uses, with 1, 2, 4, and 8 worker threads, timed by the wall clock:
 
 - `build/bench/feed.csv`: 1M events over 8 tickers. Few live orders, so the book stays in cache and
   input, parsing, and output dominate.
 - `build/bench/deep.csv`: 4M events over 200 tickers with up to 4000 live orders each. The books
   outgrow the caches, so the order index and the levels dominate.
+
+Workers split the tickers between them, so a feed scales with threads only up to its number of
+tickers, and a one-ticker capture not at all.
 
 `ORDER_BOOK_REPLAY_CSV` lists the feeds to replay, separated like `PATH`. To replay a capture
 instead of the synthetic feeds, point it at the capture:
