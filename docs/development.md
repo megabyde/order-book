@@ -174,7 +174,7 @@ floor, and these files exist:
 - `build/coverage/coverage.xml`
 
 Both supported compilers emit GCov-format data (`--coverage`), which gcovr reports through one
-interface.
+interface. `-fprofile-update=atomic` keeps the counts exact while worker threads run the same code.
 
 The report fails if line coverage falls below `COVERAGE_FAIL_UNDER` (default 100; override with
 `make coverage-report COVERAGE_FAIL_UNDER=80`).
