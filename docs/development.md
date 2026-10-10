@@ -78,7 +78,7 @@ make bench
 ```
 
 The first run writes two seeded feeds with [`scripts/gen_feed.py`](../scripts/gen_feed.py), and
-`BM_Replay/<file name>` replays each through the same `order_book::replay()` the application uses:
+`BM_Replay/<path>` replays each through the same `order_book::replay()` the application uses:
 
 - `build/bench/feed.csv`: 1M events over 8 tickers. Few live orders, so the book stays in cache and
   input, parsing, and output dominate.

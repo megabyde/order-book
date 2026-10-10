@@ -146,6 +146,7 @@ jobs:
       # Builds, runs the suite, and fails if line coverage drops below the floor.
       - run: make coverage-report
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: coverage-report
           path: build/coverage/coverage-report/

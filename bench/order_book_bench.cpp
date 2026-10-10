@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <ostream>
@@ -59,7 +58,7 @@ void BM_ParseLine(benchmark::State& state)
 BENCHMARK(BM_ParseLine);
 
 // Adds range(0) orders alternating sides over 16 price levels per side, then deletes them newest
-// first, which is the far end of each level's FIFO
+// first
 void BM_AddDelete(benchmark::State& state)
 {
     constexpr std::size_t levels = 16;
@@ -83,7 +82,7 @@ void BM_AddDelete(benchmark::State& state)
 }
 BENCHMARK(BM_AddDelete)->Range(64, 4096);
 
-// Rests range(0) buy orders at one price, then executes each in FIFO order in two halves, so
+// Rests range(0) buy orders at one price, then executes each in the order added in two halves, so
 // every event changes the best bid's quantity
 void BM_ExecuteFront(benchmark::State& state)
 {
@@ -143,7 +142,7 @@ constexpr char list_separator = ';';
 constexpr char list_separator = ':';
 #endif
 
-// Registers BM_Replay/<file name> for each feed in ORDER_BOOK_REPLAY_CSV, a list separated like
+// Registers BM_Replay/<path> for each feed in ORDER_BOOK_REPLAY_CSV, a list separated like
 // PATH, so that one process and one --benchmark_out file cover every feed
 void register_replays()
 {
@@ -156,8 +155,8 @@ void register_replays()
     }
     for (const auto feed : std::string_view(feeds) | std::views::split(list_separator)) {
         const std::string path(feed.begin(), feed.end());
-        const auto name = "BM_Replay/" + std::filesystem::path(path).filename().string();
-        benchmark::RegisterBenchmark(name, BM_Replay, path)->Unit(benchmark::kMillisecond);
+        benchmark::RegisterBenchmark("BM_Replay/" + path, BM_Replay, path)
+            ->Unit(benchmark::kMillisecond);
     }
 }
 
@@ -166,6 +165,7 @@ void register_replays()
 // NOLINTNEXTLINE(bugprone-exception-escape)
 int main(int argc, char** argv)
 {
+    benchmark::MaybeReenterWithoutASLR(argc, argv);
     register_replays();
     benchmark::Initialize(&argc, argv);
     if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
