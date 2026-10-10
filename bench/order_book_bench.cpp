@@ -103,9 +103,11 @@ void BM_ExecuteFront(benchmark::State& state)
 }
 BENCHMARK(BM_ExecuteFront)->Range(64, 4096);
 
-// Replays the feed at `path` through the same entry point as the application
+// Replays the feed at `path` with range(0) worker threads through the entry point the application
+// uses
 void BM_Replay(benchmark::State& state, const std::string& path)
 {
+    const auto threads = static_cast<std::size_t>(state.range(0));
     const std::ifstream file(path, std::ios::binary);
     if (!file) {
         state.SkipWithError("cannot open '" + path + "'");
@@ -121,7 +123,7 @@ void BM_Replay(benchmark::State& state, const std::string& path)
     // An untimed first pass rejects a malformed feed and counts its events
     std::size_t events = 0;
     try {
-        events = order_book::replay(in, out);
+        events = order_book::replay(in, out, threads);
     }
     catch (const std::invalid_argument& error) {
         state.SkipWithError(error.what());
@@ -130,11 +132,13 @@ void BM_Replay(benchmark::State& state, const std::string& path)
     for (const auto _ : state) {
         in.clear();
         in.seekg(0);
-        order_book::replay(in, out);
+        order_book::replay(in, out, threads);
     }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(events));
     state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(feed.size()));
 }
+
+constexpr int max_replay_threads = 8;
 
 #ifdef _WIN32
 constexpr char list_separator = ';';
@@ -142,8 +146,8 @@ constexpr char list_separator = ';';
 constexpr char list_separator = ':';
 #endif
 
-// Registers BM_Replay/<path> for each feed in ORDER_BOOK_REPLAY_CSV, a list separated like
-// PATH, so that one process and one --benchmark_out file cover every feed
+// Registers BM_Replay/<path>/threads:N for each feed in ORDER_BOOK_REPLAY_CSV, a list separated
+// like PATH, so that one process and one --benchmark_out file cover every feed
 void register_replays()
 {
     const char* const feeds = std::getenv("ORDER_BOOK_REPLAY_CSV");
@@ -156,6 +160,10 @@ void register_replays()
     for (const auto feed : std::string_view(feeds) | std::views::split(list_separator)) {
         const std::string path(feed.begin(), feed.end());
         benchmark::RegisterBenchmark("BM_Replay/" + path, BM_Replay, path)
+            ->ArgName("threads")
+            ->RangeMultiplier(2)
+            ->Range(1, max_replay_threads)
+            ->UseRealTime()
             ->Unit(benchmark::kMillisecond);
     }
 }

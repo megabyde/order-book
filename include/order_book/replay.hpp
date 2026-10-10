@@ -13,6 +13,15 @@ namespace order_book {
 /// `out`, with empty fields for an empty side. Returns the number of events applied, trades
 /// included. Throws std::invalid_argument prefixed with `line N: ` on the first line that cannot
 /// be parsed or applied; output up to that line has already been written.
+///
+/// Uses one worker thread per hardware thread; see the overload taking `threads`.
 std::size_t replay(std::istream& in, std::ostream& out);
+
+/// Replay as above with `threads` worker threads, at least 1
+///
+/// Each worker keeps the books of the tickers whose names hash to it, and the calling thread
+/// reads the input and writes the output in line order, so the output and the exception do not
+/// depend on `threads`. A feed with fewer tickers than workers leaves the rest idle.
+std::size_t replay(std::istream& in, std::ostream& out, std::size_t threads);
 
 } // namespace order_book
