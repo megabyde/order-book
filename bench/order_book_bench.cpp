@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <ostream>
@@ -15,6 +16,7 @@
 #include <stdexcept>
 #include <streambuf>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -102,17 +104,12 @@ void BM_ExecuteFront(benchmark::State& state)
 }
 BENCHMARK(BM_ExecuteFront)->Range(64, 4096);
 
-// Replays the feed named by ORDER_BOOK_REPLAY_CSV through the same entry point as the application
-void BM_Replay(benchmark::State& state)
+// Replays the feed at `path` through the same entry point as the application
+void BM_Replay(benchmark::State& state, const std::string& path)
 {
-    const char* const path = std::getenv("ORDER_BOOK_REPLAY_CSV");
-    if (path == nullptr) {
-        state.SkipWithMessage("ORDER_BOOK_REPLAY_CSV is not set");
-        return;
-    }
     const std::ifstream file(path, std::ios::binary);
     if (!file) {
-        state.SkipWithError(std::string("cannot open '") + path + "'");
+        state.SkipWithError("cannot open '" + path + "'");
         return;
     }
     std::stringstream contents;
@@ -139,6 +136,42 @@ void BM_Replay(benchmark::State& state)
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(events));
     state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(feed.size()));
 }
-BENCHMARK(BM_Replay)->Unit(benchmark::kMillisecond);
+
+#ifdef _WIN32
+constexpr char list_separator = ';';
+#else
+constexpr char list_separator = ':';
+#endif
+
+// Registers BM_Replay/<file name> for each feed in ORDER_BOOK_REPLAY_CSV, a list separated like
+// PATH, so that one process and one --benchmark_out file cover every feed
+void register_replays()
+{
+    const char* const feeds = std::getenv("ORDER_BOOK_REPLAY_CSV");
+    if (feeds == nullptr) {
+        benchmark::RegisterBenchmark("BM_Replay", [](benchmark::State& state) {
+            state.SkipWithMessage("ORDER_BOOK_REPLAY_CSV is not set");
+        });
+        return;
+    }
+    for (const auto feed : std::string_view(feeds) | std::views::split(list_separator)) {
+        const std::string path(feed.begin(), feed.end());
+        const auto name = "BM_Replay/" + std::filesystem::path(path).filename().string();
+        benchmark::RegisterBenchmark(name, BM_Replay, path)->Unit(benchmark::kMillisecond);
+    }
+}
 
 } // namespace
+
+// NOLINTNEXTLINE(bugprone-exception-escape)
+int main(int argc, char** argv)
+{
+    register_replays();
+    benchmark::Initialize(&argc, argv);
+    if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
+        return 1;
+    }
+    benchmark::RunSpecifiedBenchmarks();
+    benchmark::Shutdown();
+    return 0;
+}
