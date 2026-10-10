@@ -53,7 +53,11 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-          cache_packages: true
+      - uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
       # The Conan toolchain probes for mold only on Linux, so the macOS leg installs ccache alone.
       # Refresh apt metadata first because runner images can retain package lists whose versions no
       # longer exist
@@ -96,7 +100,11 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-          cache_packages: true
+      - uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
       - name: Install dependencies (release)
         run: conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
       - name: Build and test (release preset)
@@ -123,7 +131,11 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-          cache_packages: true
+      - uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ env.CONAN_VERSION }}-coverage-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-coverage-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
       - uses: actions/cache@v6
         with:
           path: .ccache
@@ -149,7 +161,11 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-          cache_packages: true
+      - uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ env.CONAN_VERSION }}-lint-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-lint-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
       # ~/.local/bin precedes /usr/bin on the runner, so these shadow the image's
       # unpinned clang-format/clang-tidy.
       - name: Pin lint toolchain
