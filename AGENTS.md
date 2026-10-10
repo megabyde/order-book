@@ -11,8 +11,8 @@ and offer whenever it changes. It was generated from
 Documentation is split by what it serves:
 
 - `README.md`: the entry point. What the program does, and how to build and run it.
-- `docs/development.md`: the workflow reference. Sanitizers, presets, the lock file, formatting and
-  linting, coverage, documentation, build policy, and IDE setup.
+- `docs/development.md`: the workflow reference. Sanitizers, tests, benchmarks, presets, the lock
+  file, formatting and linting, coverage, documentation, build policy, and IDE setup.
 - `SECURITY.md`: the vulnerability reporting process.
 - `AGENTS.md`: the contributor process the user docs do not need.
 
@@ -60,6 +60,16 @@ a pin change is a no-op commit; drop it rather than committing churn.
 sanitizer values this project needs. It parses only Conan's documented two-level structure and uses
 the standard library alone, because PyYAML is not available everywhere it runs. Unrecognized input
 fails the check and expects a manual merge.
+
+## Feed semantics
+
+The effect of each message type is implemented twice: in `src/order_book.cpp`, and in
+`scripts/reference_bbo.py`, the oracle of the differential tests. A semantics change updates both in
+the same commit; the differential tests fail while they disagree. The output format is likewise
+shared by `src/replay.cpp` and the reference model.
+
+Never commit a real exchange capture. Tests use the hand-checked `tests/data/sample.csv` and feeds
+from `scripts/gen_feed.py`; point `ORDER_BOOK_REPLAY_CSV` at a local capture to benchmark it.
 
 ## Definition of Done
 

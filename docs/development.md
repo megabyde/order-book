@@ -49,7 +49,23 @@ public `sanitize*` presets, keeping the runtime configuration out of `CMakePrese
 
 Tests are controlled by CMake's built-in `BUILD_TESTING` option from `include(CTest)`. This project
 leaves it at the default `ON`, so `make debug`, `make release`, `make sanitize*`, and
-`make coverage` all run the GTest suite.
+`make coverage` all run the suite. It has four layers:
+
+- Unit tests in `tests/*_test.cpp` cover the parser, the book, and `replay()`.
+- `AppTest.*` runs the application on each error path through
+  [`tests/expect_error.cmake`](../tests/expect_error.cmake), which checks the exit status and the
+  stderr message separately.
+- `AppTest.ReplaysSample` replays the hand-checked [`tests/data/sample.csv`](../tests/data/sample.csv)
+  and compares the output with `tests/data/sample.expected`.
+- `Differential.Default` and `Differential.Large` generate a seeded feed with
+  [`scripts/gen_feed.py`](../scripts/gen_feed.py), 50k events over 8 tickers and 200k over 20, and
+  compare the application's output with [`scripts/reference_bbo.py`](../scripts/reference_bbo.py),
+  an independent Python model of the feed semantics. Both scripts use the standard library only, and
+  the two tests are skipped when CMake finds no Python 3.
+
+`reference_bbo.py --stats FILE` also prints feed-consistency counters, such as adds that cross the
+book and `C` messages that do not decrease the order, for checking that a real capture fits the
+replay semantics.
 
 ## Benchmarks
 
