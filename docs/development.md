@@ -77,17 +77,23 @@ Build the release benchmarks and run them:
 make bench
 ```
 
-The first run writes a seeded 1M-event feed to `build/bench/feed.csv` with
-[`scripts/gen_feed.py`](../scripts/gen_feed.py); `BM_Replay` replays it through the same
-`order_book::replay()` the application uses. To replay another capture instead, point
-`ORDER_BOOK_REPLAY_CSV` at it:
+The first run writes two seeded feeds with [`scripts/gen_feed.py`](../scripts/gen_feed.py), and
+`BM_Replay/<file name>` replays each through the same `order_book::replay()` the application uses:
+
+- `build/bench/feed.csv`: 1M events over 8 tickers. Few live orders, so the book stays in cache and
+  input, parsing, and output dominate.
+- `build/bench/deep.csv`: 4M events over 200 tickers with up to 4000 live orders each. The books
+  outgrow the caches, so the order index and the levels dominate.
+
+`ORDER_BOOK_REPLAY_CSV` lists the feeds to replay, separated like `PATH`. To replay a capture
+instead of the synthetic feeds, point it at the capture:
 
 ```bash
 ORDER_BOOK_REPLAY_CSV=/path/to/feed.csv make bench
 ```
 
 `BENCH_ARGS` replaces the default Google Benchmark flags, 10 repetitions reporting aggregates only.
-For example, `make bench BENCH_ARGS=--benchmark_filter=BM_Replay` runs the replay alone.
+For example, `make bench BENCH_ARGS=--benchmark_filter=BM_Replay` runs the replays alone.
 
 The suite is a Conan `test_requires` behind the `with_benchmarks` option, which sets CMake's
 `BUILD_BENCHMARKS`; both default to on. Every workflow preset builds it and runs one iteration of
