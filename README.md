@@ -74,8 +74,10 @@ The library in `include/order_book/` has three parts:
   finds any order in one hash lookup. An event costs that lookup, plus a level lookup for an add,
   whatever the depth of the level.
 - [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
-  feed, keeps a book per ticker, and writes a line whenever a BBO changes. The application opens the
-  file and calls it, and so does the replay benchmark.
+  feed, keeps a book per ticker, and writes a line whenever a BBO changes. Worker threads, one per
+  hardware thread by default, each keep the books of the tickers that hash to them, and the calling
+  thread merges their output back into input order, so the output does not depend on the thread
+  count. The application opens the file and calls it, and so does the replay benchmark.
 
 This repository uses:
 

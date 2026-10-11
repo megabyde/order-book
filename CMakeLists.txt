@@ -74,7 +74,7 @@ function(enable_coverage target)
     endif()
 
     if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
-        target_compile_options(${target} PRIVATE --coverage)
+        target_compile_options(${target} PRIVATE --coverage -fprofile-update=atomic)
         target_link_options(${target} PRIVATE --coverage)
     else()
         message(FATAL_ERROR "Coverage requires GCC, Clang, or AppleClang")
