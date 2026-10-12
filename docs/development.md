@@ -190,7 +190,7 @@ make docs
 ```
 
 The build is complete when `build/docs/html/index.html` exists. GitHub Pages runs the same target
-and publishes the result from the `master` branch.
+and publishes the result from the `main` branch.
 
 ## Build policy
 

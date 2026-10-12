@@ -78,4 +78,4 @@ from `scripts/gen_feed.py`; point `ORDER_BOOK_REPLAY_CSV` at a local capture to 
   `COVERAGE_FAIL_UNDER`.
 - Documentation changed in the same commit when the change touches presets, make targets, flags,
   or the dependency set.
-- Commits follow Conventional Commits, and work reaches `master` through a pull request.
+- Commits follow Conventional Commits, and work reaches `main` through a pull request.
