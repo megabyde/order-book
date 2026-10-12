@@ -24,7 +24,8 @@ Do not restate `docs/development.md` here. Link to the section instead.
 public build interface, and the workflow presets are what CI runs.
 
 - `make debug` and `make release` build and test through the matching workflow preset.
-- `make sanitize`, `make sanitize-asan`, and `make sanitize-ubsan` build instrumented trees.
+- `make sanitize`, `make sanitize-asan`, `make sanitize-ubsan`, and `make sanitize-tsan` build
+  instrumented trees.
 - `make coverage` and `make coverage-report`, which enforces a line floor of `COVERAGE_FAIL_UNDER`,
   100 by default.
 - `make lint` runs clang-tidy, cmake-lint, ruff, and markdownlint. `make format` rewrites in place

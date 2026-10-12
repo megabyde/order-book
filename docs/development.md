@@ -2,7 +2,7 @@
 
 Prerequisite: complete the [README setup](../README.md) for your platform first.
 
-## Sanitizers (ASan + UBSan)
+## Sanitizers
 
 Outcome: first-party code and dependencies built with matching sanitizer instrumentation, followed
 by the instrumented test suite.
@@ -22,17 +22,22 @@ Choose one mode:
   `build/debug-address`
 - **UBSan:** `make sanitize-ubsan` uses [`profiles/sanitize-ubsan`](../profiles/sanitize-ubsan) and
   `build/debug-undefinedbehavior`
+- **TSan:** `make sanitize-tsan` uses [`profiles/sanitize-tsan`](../profiles/sanitize-tsan) and
+  `build/debug-thread`. TSan cannot run alongside ASan, so it has no combined mode. `replay()`
+  runs its workers on threads, so this is the mode that checks them for data races.
 
 The sanitizer run is complete when the selected target exits successfully after running the tests.
 If a sanitizer detects an error, it prints a stack trace, stops at the first finding, and returns a
 failure through CTest to the selected `make` target. Fix the reported source error, then rerun the
 same target.
 
-`make sanitize` is the combined mode used by CI. To install all three instrumented dependency graphs
-without running their workflows, use `make bootstrap-sanitize`. The default `make bootstrap` does
+CI runs `make sanitize` and `make sanitize-tsan`. On Linux it first sets `vm.mmap_rnd_bits=28`: the
+runner kernel randomizes mmap with more bits than the TSan runtime's memory layout allows. To install
+all four instrumented dependency graphs without running their workflows, use
+`make bootstrap-sanitize`. The default `make bootstrap` does
 not install them.
 
-All three profiles inherit [`profiles/sanitize-common`](../profiles/sanitize-common), which includes
+All four profiles inherit [`profiles/sanitize-common`](../profiles/sanitize-common), which includes
 `profiles/default`, selects `Debug`, and defines the shared instrumentation flags and `[runenv]`.
 Each mode appends its own `-fsanitize` flags and shares `conan.lock`.
 
@@ -41,7 +46,7 @@ The custom `compiler.sanitizer` setting gives each instrumented dependency graph
 defaults to `null`, which is omitted from `package_id`, so non-sanitizer builds do not change.
 First-party targets receive the same profile flags through the Conan toolchain.
 
-ASan/UBSan runtime options such as `halt_on_error` and `print_stacktrace` live under `[runenv]` in
+Sanitizer runtime options such as `halt_on_error` and `print_stacktrace` live under `[runenv]` in
 `profiles/sanitize-common`. Conan injects them into the generated test presets inherited by the
 public `sanitize*` presets, keeping the runtime configuration out of `CMakePresets.json`.
 
@@ -106,9 +111,10 @@ timings are meaningless; take numbers from `make bench` on an idle machine.
 
 ## Public presets
 
-The main workflow presets are `debug`, `release`, `sanitize`, `sanitize-asan`, `sanitize-ubsan`, and
-`coverage`. Configure, build, and test presets use the same names. `docs` is configure/build only
-because it generates Doxygen HTML instead of compiling and testing the application.
+The main workflow presets are `debug`, `release`, `sanitize`, `sanitize-asan`, `sanitize-ubsan`,
+`sanitize-tsan`, and `coverage`. Configure, build, and test presets use the same names. `docs` is
+configure/build only because it generates Doxygen HTML instead of compiling and testing the
+application.
 
 The Conan-generated `conan-*` presets are internal implementation details and are not the public
 interface for developers or CI.

@@ -27,7 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        preset: [debug, release, sanitize]
+        preset: [debug, release, sanitize, sanitize-tsan]
         compiler: [gcc, clang]
         exclude:
           - os: macos-latest
@@ -72,8 +72,11 @@ jobs:
           restore-keys: ccache-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-
       - run: make lock-check
       - run: make bootstrap
-      - if: matrix.preset == 'sanitize'
-        run: make bootstrap-sanitize
+      # The runner kernel randomizes mmap with more bits than the TSan runtime's fixed memory layout
+      # allows, which aborts every instrumented test at startup.
+      - name: Fit mmap randomization to TSan
+        if: runner.os == 'Linux' && matrix.preset == 'sanitize-tsan'
+        run: sudo sysctl vm.mmap_rnd_bits=28
       - run: make ${{ matrix.preset }}
       - name: ccache stats
         run: ccache -sv
