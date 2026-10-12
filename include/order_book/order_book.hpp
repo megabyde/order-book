@@ -56,8 +56,9 @@ enum class BookError : std::uint8_t {
  */
 class OrderBook {
 public:
-    /// Apply `event` to the order with ID `order`; on error the book is unchanged
-    [[nodiscard]] std::expected<void, BookError> apply(std::string_view order, const Event& event);
+    /// Apply `event` to the order with ID `order`, returning whether the best bid or offer
+    /// changed; on error the book is unchanged
+    [[nodiscard]] std::expected<bool, BookError> apply(std::string_view order, const Event& event);
     /// Current best bid and offer
     [[nodiscard]] Bbo bbo() const;
     /// Number of resting orders on both sides
@@ -70,8 +71,21 @@ private:
         Quantity total = 0;
         std::size_t orders = 0;
     };
+    // Orders a side's prices best first, so its best level is begin(), which std::map keeps in
+    // constant time; one type for both sides lets an order hold a level of either
+    class BestFirst {
+    public:
+        explicit BestFirst(Side side) : m_descending(side == Side::Buy) {}
+        [[nodiscard]] bool operator()(Price lhs, Price rhs) const
+        {
+            return m_descending ? lhs > rhs : lhs < rhs;
+        }
+
+    private:
+        bool m_descending;
+    };
     // std::map iterators survive inserts and erases of other levels
-    using Levels = std::map<Price, PriceLevel>;
+    using Levels = std::map<Price, PriceLevel, BestFirst>;
     struct Order {
         std::string id;
         Levels::iterator level;
@@ -87,14 +101,15 @@ private:
     static constexpr std::uint32_t empty_slot = std::numeric_limits<std::uint32_t>::max();
     static constexpr std::size_t initial_slots = 16;
 
-    std::expected<void, BookError> add(std::string_view order, const AddOrder& add);
+    std::expected<bool, BookError> add(std::string_view order, const AddOrder& add);
     // Slot holding `id`, or the empty slot that ends its probe sequence
     [[nodiscard]] std::size_t find(std::string_view id, std::uint32_t hash) const;
     // Empty `slot`, shifting later entries of the probe run back so that no lookup stops early
     void erase(std::size_t slot);
     void grow();
 
-    Levels m_bids, m_asks;
+    Levels m_bids{BestFirst(Side::Buy)};
+    Levels m_asks{BestFirst(Side::Sell)};
     // Orders by position; removed positions are listed in m_free and reused
     std::vector<Order> m_orders;
     std::vector<std::uint32_t> m_free;

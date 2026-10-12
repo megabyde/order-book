@@ -69,10 +69,11 @@ The library in `include/order_book/` has three parts:
   event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
   that knows the line format.
 - [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book. Each side is a
-  `std::map` from price to a level holding a running total and an order count. Orders live in a
-  `std::vector` that reuses removed positions, and an open-addressing index from order ID to position
-  finds any order in one hash lookup. An event costs that lookup, plus a level lookup for an add,
-  whatever the depth of the level.
+  `std::map` from price to a level holding a running total and an order count, ordered best price
+  first so that the best level is `begin()`. Orders live in a `std::vector` that reuses removed
+  positions, and an open-addressing index from order ID to position finds any order in one hash
+  lookup. An event costs that lookup, plus a level lookup for an add, whatever the depth of the
+  level.
 - [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
   feed, keeps a book per ticker, and writes a line whenever a BBO changes. Worker threads, one per
   hardware thread by default, each keep the books of the tickers that hash to them, and the calling

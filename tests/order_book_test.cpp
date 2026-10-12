@@ -64,10 +64,12 @@ namespace {
 // inheritance.
 template <typename Base = testing::Test> class BookTest : public Base {
 protected:
-    void apply(std::string_view order, const Event& event)
+    // Apply an event the book must accept, returning whether the BBO changed
+    bool apply(std::string_view order, const Event& event)
     {
         const auto applied = book.apply(order, event);
-        ASSERT_TRUE(applied) << "rejected order " << order;
+        EXPECT_TRUE(applied.has_value()) << "rejected order " << order;
+        return applied.value_or(false);
     }
 
     void buy(std::string_view order, Price price, Quantity shares)
@@ -287,17 +289,29 @@ public:
     [[nodiscard]] const std::vector<std::string>& ids() const { return m_ids; }
     [[nodiscard]] Quantity remaining(const std::string& id) const { return m_live.at(id).shares; }
 
-    // Whether `book` holds the same levels and number of orders
-    [[nodiscard]] testing::AssertionResult matches(const OrderBook& book) const
+    [[nodiscard]] Bbo bbo() const
     {
-        Bbo expected;
+        Bbo result;
         if (!m_bids.empty()) {
             const auto& [price, total] = *m_bids.rbegin();
-            expected.bid = Level{.price = price, .quantity = total};
+            result.bid = Level{.price = price, .quantity = total};
         }
         if (!m_asks.empty()) {
             const auto& [price, total] = *m_asks.begin();
-            expected.ask = Level{.price = price, .quantity = total};
+            result.ask = Level{.price = price, .quantity = total};
+        }
+        return result;
+    }
+
+    // Whether `book` holds the same levels and number of orders, and `changed`, what the book
+    // reported for the last event, matches whether the BBO moved from `before`
+    [[nodiscard]] testing::AssertionResult matches(const OrderBook& book, bool changed,
+                                                   const Bbo& before) const
+    {
+        const auto expected = bbo();
+        if (changed != (expected != before)) {
+            return testing::AssertionFailure()
+                   << "reported " << (changed ? "a" : "no") << " BBO change";
         }
         if (book.bbo() != expected) {
             return testing::AssertionFailure() << "BBO " << testing::PrintToString(book.bbo())
@@ -340,6 +354,8 @@ TEST_F(OrderBookTest, MatchesModelUnderChurn)
     constexpr int steps = 40000;
     for (int step = 0; step < steps; ++step) {
         // Two adds in three during the first half, then only removals
+        const auto before = model.bbo();
+        auto changed = false;
         if (model.ids().empty() || (step < steps / 2 && random() % 3 != 0)) {
             const AddOrder add{
                 .side = random() % 2 == 0 ? Side::Buy : Side::Sell,
@@ -347,7 +363,7 @@ TEST_F(OrderBookTest, MatchesModelUnderChurn)
                 .shares = static_cast<Quantity>(1 + (random() % 100)),
             };
             const auto id = std::to_string(next_id++);
-            apply(id, add);
+            changed = apply(id, add);
             model.add(id, add);
             peak = std::max(peak, model.ids().size());
         }
@@ -356,17 +372,46 @@ TEST_F(OrderBookTest, MatchesModelUnderChurn)
             const auto remaining = model.remaining(id);
             if (random() % 2 == 0) {
                 const auto shares = 1 + (random() % remaining);
-                apply(id, ExecuteOrder{shares});
+                changed = apply(id, ExecuteOrder{shares});
                 model.take(id, shares);
             }
             else {
-                apply(id, DeleteOrder{});
+                changed = apply(id, DeleteOrder{});
                 model.take(id, remaining);
             }
         }
-        ASSERT_TRUE(model.matches(book)) << "step " << step;
+        ASSERT_TRUE(model.matches(book, changed, before)) << "step " << step;
     }
     EXPECT_GT(peak, 5000U);
+}
+
+TEST_F(OrderBookTest, ReportsWhetherBboChanged)
+{
+    EXPECT_TRUE(apply("1", AddOrder{.side = Side::Buy, .price = 1000, .shares = 100}));
+    // Below the best bid
+    EXPECT_FALSE(apply("2", AddOrder{.side = Side::Buy, .price = 990, .shares = 100}));
+    // Joins the best level and raises its total
+    EXPECT_TRUE(apply("3", AddOrder{.side = Side::Buy, .price = 1000, .shares = 50}));
+    // Joins the best level without changing its total
+    EXPECT_FALSE(apply("4", AddOrder{.side = Side::Buy, .price = 1000, .shares = 0}));
+    EXPECT_FALSE(apply("1", ExecuteOrder{0}));
+    EXPECT_FALSE(apply("2", ExecuteOrder{10}));
+    // A decrease to the current quantity or above does nothing
+    EXPECT_FALSE(apply("1", DecreaseOrder{200}));
+    EXPECT_TRUE(apply("1", DecreaseOrder{60}));
+    // Removes an empty order and leaves the best level's total as it was
+    EXPECT_FALSE(apply("4", DeleteOrder{}));
+    // Removes the only order of a level below the best
+    EXPECT_FALSE(apply("2", DeleteOrder{}));
+    // An empty level above the best still moves the price
+    EXPECT_TRUE(apply("5", AddOrder{.side = Side::Buy, .price = 1010, .shares = 0}));
+    EXPECT_TRUE(apply("5", DeleteOrder{}));
+    EXPECT_FALSE(apply("0", NoOp{}));
+    EXPECT_TRUE(apply("6", AddOrder{.side = Side::Sell, .price = 1100, .shares = 10}));
+    EXPECT_FALSE(apply("7", AddOrder{.side = Side::Sell, .price = 1200, .shares = 10}));
+    EXPECT_TRUE(apply("1", FillOrder{}));
+    EXPECT_TRUE(apply("3", FillOrder{}));
+    EXPECT_EQ(book.bbo(), bbo({}, Level{1100, 10}));
 }
 
 // NOLINTEND(readability-magic-numbers)

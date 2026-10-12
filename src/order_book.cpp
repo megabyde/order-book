@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
-#include <iterator>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -24,13 +23,13 @@ std::uint32_t hash_id(std::string_view id)
 
 } // namespace
 
-std::expected<void, BookError> OrderBook::apply(std::string_view order, const Event& event)
+std::expected<bool, BookError> OrderBook::apply(std::string_view order, const Event& event)
 {
     if (const auto* const add_order = std::get_if<AddOrder>(&event)) {
         return add(order, *add_order);
     }
     if (std::holds_alternative<NoOp>(event)) {
-        return {};
+        return false;
     }
 
     const auto slot = find(order, hash_id(order));
@@ -44,7 +43,7 @@ std::expected<void, BookError> OrderBook::apply(std::string_view order, const Ev
     auto quantity = remaining;
     if (const auto* const decrease = std::get_if<DecreaseOrder>(&event)) {
         if (decrease->shares >= remaining) {
-            return {};
+            return false;
         }
         quantity = remaining - decrease->shares;
     }
@@ -52,24 +51,28 @@ std::expected<void, BookError> OrderBook::apply(std::string_view order, const Ev
         quantity = std::min(execute->shares, remaining);
     }
 
+    auto& levels = resting.side == Side::Buy ? m_bids : m_asks;
+    // Only the best level shows in the BBO, and only if its total changes or it goes away
+    auto changed = resting.level == levels.begin() && quantity != 0;
     auto& level = resting.level->second;
     level.total -= quantity;
     resting.remaining -= quantity;
     if (resting.remaining == 0) {
         if (--level.orders == 0) {
-            (resting.side == Side::Buy ? m_bids : m_asks).erase(resting.level);
+            changed = resting.level == levels.begin();
+            levels.erase(resting.level);
         }
         m_free.push_back(position);
         erase(slot);
     }
-    return {};
+    return changed;
 }
 
 Bbo OrderBook::bbo() const
 {
     Bbo bbo;
     if (!m_bids.empty()) {
-        const auto& [price, level] = *std::prev(m_bids.end());
+        const auto& [price, level] = *m_bids.begin();
         bbo.bid = Level{.price = price, .quantity = level.total};
     }
     if (!m_asks.empty()) {
@@ -79,7 +82,7 @@ Bbo OrderBook::bbo() const
     return bbo;
 }
 
-std::expected<void, BookError> OrderBook::add(std::string_view order, const AddOrder& add)
+std::expected<bool, BookError> OrderBook::add(std::string_view order, const AddOrder& add)
 {
     const auto hash = hash_id(order);
     auto slot = find(order, hash);
@@ -92,9 +95,10 @@ std::expected<void, BookError> OrderBook::add(std::string_view order, const AddO
     }
 
     auto& levels = add.side == Side::Buy ? m_bids : m_asks;
-    const auto level = levels.try_emplace(add.price).first;
+    const auto [level, created] = levels.try_emplace(add.price);
     level->second.total += add.shares;
     ++level->second.orders;
+    const auto changed = level == levels.begin() && (created || add.shares != 0);
 
     std::uint32_t position = 0;
     if (m_free.empty()) {
@@ -112,7 +116,7 @@ std::expected<void, BookError> OrderBook::add(std::string_view order, const AddO
     resting.remaining = add.shares;
     resting.side = add.side;
     m_index[slot] = Slot{.order = position, .hash = hash};
-    return {};
+    return changed;
 }
 
 std::size_t OrderBook::find(std::string_view id, std::uint32_t hash) const
