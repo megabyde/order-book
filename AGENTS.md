@@ -69,6 +69,10 @@ The effect of each message type is implemented twice: in `src/order_book.cpp`, a
 the same commit; the differential tests fail while they disagree. The output format is likewise
 shared by `src/replay.cpp` and the reference model.
 
+ITCH input maps onto the same semantics in `src/itch.cpp`. The model reads only CSV, so the ITCH
+path is checked by encoding the CSV feeds with `scripts/csv_to_itch.py` and requiring the same
+output. A change to how an ITCH type maps onto the book updates the encoder in the same commit.
+
 Never commit a real exchange capture. Tests use the hand-checked `tests/data/sample.csv` and feeds
 from `scripts/gen_feed.py`; point `ORDER_BOOK_REPLAY_CSV` at a local capture to benchmark it.
 

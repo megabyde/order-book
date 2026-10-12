@@ -1,7 +1,7 @@
-# Run APP on INPUT and fail unless its stdout matches EXPECTED, line endings aside: Windows writes
-# CRLF to a text-mode stdout
+# Run APP with an optional OPTION on INPUT and fail unless its stdout matches EXPECTED, line endings
+# aside: Windows writes CRLF to a text-mode stdout
 execute_process(
-    COMMAND ${APP} ${INPUT}
+    COMMAND ${APP} ${OPTION} ${INPUT}
     OUTPUT_FILE ${ACTUAL}
     RESULT_VARIABLE result
 )

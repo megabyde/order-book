@@ -149,7 +149,7 @@ endfunction()
 # Non-main code lives in a library so the application and the tests link the same artifact instead
 # of recompiling sources. Include dirs and the language standard are PUBLIC so both consumers
 # inherit them.
-add_library(order_book_lib STATIC src/feed.cpp src/order_book.cpp src/replay.cpp)
+add_library(order_book_lib STATIC src/feed.cpp src/itch.cpp src/order_book.cpp src/replay.cpp)
 target_include_directories(order_book_lib PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(order_book_lib PUBLIC cxx_std_23)
 enable_project_options(order_book_lib)
@@ -210,7 +210,8 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     include(GoogleTest)
     add_executable(
-        order_book_test tests/feed_test.cpp tests/order_book_test.cpp tests/replay_test.cpp
+        order_book_test tests/feed_test.cpp tests/itch_test.cpp tests/order_book_test.cpp
+                        tests/replay_test.cpp
     )
     target_link_libraries(order_book_test PRIVATE order_book_lib GTest::gtest_main)
     enable_project_options(order_book_test)
@@ -227,7 +228,21 @@ if(BUILD_TESTING)
                     "-DPATTERN=${pattern}" -P ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
         )
     endfunction()
-    add_app_error_test(PrintsUsage 2 "Usage: .* FILE")
+    add_app_error_test(PrintsUsage 2 "Usage: .* \\[--format=csv\\|itch\\] FILE")
+    add_test(
+        NAME AppTest.PrintsUsageForTwoFiles
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=first.csv -DINPUT=second.csv
+            -DEXIT=2 "-DPATTERN=Usage: " -P ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+    )
+    add_test(
+        NAME AppTest.RejectsUnknownFormat
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=--format=xml
+            -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv -DEXIT=2
+            "-DPATTERN=error: unknown format 'xml'; expected csv or itch" -P
+            ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+    )
     add_app_error_test(
         RejectsMissingFile 1 "error: cannot open '.*missing.csv'" ${PROJECT_BINARY_DIR}/missing.csv
     )
@@ -250,24 +265,47 @@ if(BUILD_TESTING)
             -DACTUAL=${PROJECT_BINARY_DIR}/sample.actual -P
             ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
     )
+    add_test(
+        NAME AppTest.ReplaysSampleWithFormatFlag
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=--format=csv
+            -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
+            -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/sample.expected
+            -DACTUAL=${PROJECT_BINARY_DIR}/sample_flag.actual -P
+            ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
+    )
 
     # Differential tests against the independent Python model of the feed semantics. Skipped when no
     # Python interpreter is found; the scripts need only the standard library.
     find_package(Python3 COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
-        function(add_differential_test name events tickers seed)
+        function(add_differential_test name events tickers seed format)
             add_test(
                 NAME Differential.${name}
                 COMMAND
                     ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DPYTHON=${Python3_EXECUTABLE}
                     -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
                     -DWORK=${PROJECT_BINARY_DIR}/differential_${name} -DEVENTS=${events}
-                    -DTICKERS=${tickers} -DSEED=${seed} -P
+                    -DTICKERS=${tickers} -DSEED=${seed} -DFORMAT=${format} -P
                     ${PROJECT_SOURCE_DIR}/tests/differential.cmake
             )
         endfunction()
-        add_differential_test(Default 50000 8 1)
-        add_differential_test(Large 200000 20 2)
+        add_differential_test(Default 50000 8 1 csv)
+        add_differential_test(Large 200000 20 2 csv)
+        # The same feeds encoded as ITCH must replay to the same output
+        add_differential_test(DefaultItch 50000 8 1 itch)
+        add_differential_test(LargeItch 200000 20 2 itch)
+
+        add_test(
+            NAME AppTest.ReplaysSampleItch
+            COMMAND
+                ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DPYTHON=${Python3_EXECUTABLE}
+                -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+                -DCSV=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
+                -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/sample.expected
+                -DWORK=${PROJECT_BINARY_DIR}/sample_itch -P
+                ${PROJECT_SOURCE_DIR}/tests/replay_itch.cmake
+        )
     endif()
 endif()
 

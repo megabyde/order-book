@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <map>
 #include <optional>
 #include <ostream>
@@ -412,6 +413,46 @@ TEST_F(OrderBookTest, ReportsWhetherBboChanged)
     EXPECT_TRUE(apply("1", FillOrder{}));
     EXPECT_TRUE(apply("3", FillOrder{}));
     EXPECT_EQ(book.bbo(), bbo({}, Level{1100, 10}));
+}
+
+// The ITCH book keys orders by reference number; replace() is how it applies U
+TEST(ItchOrderBookTest, ReplaceKeepsTheSideAndMovesTheOrder)
+{
+    order_book::ItchOrderBook book;
+    ASSERT_TRUE(book.apply(1, AddOrder{.side = Side::Buy, .price = 1000, .shares = 100}));
+    ASSERT_TRUE(book.apply(2, AddOrder{.side = Side::Sell, .price = 1010, .shares = 50}));
+
+    // A new best bid: the replacement rests on the buy side at its own price and size
+    EXPECT_EQ(book.replace(1, 3, 1005, 70), true);
+    EXPECT_EQ(book.bbo(), bbo(Level{1005, 70}, Level{1010, 50}));
+    EXPECT_EQ(book.order_count(), 2U);
+    EXPECT_EQ(book.apply(1, DeleteOrder{}), std::unexpected(BookError::UnknownOrder));
+
+    // Replacing an order by the same reference number is a replacement like any other
+    EXPECT_EQ(book.replace(3, 3, 1005, 60), true);
+    EXPECT_EQ(book.bbo(), bbo(Level{1005, 60}, Level{1010, 50}));
+}
+
+TEST(ItchOrderBookTest, ReplaceBelowTheBestLeavesTheBboAlone)
+{
+    order_book::ItchOrderBook book;
+    ASSERT_TRUE(book.apply(1, AddOrder{.side = Side::Buy, .price = 1000, .shares = 100}));
+    ASSERT_TRUE(book.apply(2, AddOrder{.side = Side::Buy, .price = 990, .shares = 10}));
+    EXPECT_EQ(book.replace(2, 4, 980, 20), false);
+    EXPECT_EQ(book.bbo(), bbo(Level{1000, 100}, {}));
+    EXPECT_EQ(book.level_count(), 2U);
+}
+
+TEST(ItchOrderBookTest, ReplaceRejectsUnknownOrderOrLiveReplacement)
+{
+    order_book::ItchOrderBook book;
+    ASSERT_TRUE(book.apply(1, AddOrder{.side = Side::Buy, .price = 1000, .shares = 100}));
+    ASSERT_TRUE(book.apply(2, AddOrder{.side = Side::Buy, .price = 990, .shares = 10}));
+
+    EXPECT_EQ(book.replace(9, 3, 1005, 70), std::unexpected(BookError::UnknownOrder));
+    EXPECT_EQ(book.replace(1, 2, 1005, 70), std::unexpected(BookError::DuplicateOrder));
+    EXPECT_EQ(book.bbo(), bbo(Level{1000, 100}, {}));
+    EXPECT_EQ(book.order_count(), 2U);
 }
 
 // NOLINTEND(readability-magic-numbers)
