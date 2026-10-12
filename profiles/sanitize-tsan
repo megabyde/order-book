@@ -1,0 +1,12 @@
+# ThreadSanitizer only. Inherits the shared base and appends thread instrumentation. TSan cannot be
+# combined with ASan, so it has no combined mode.
+include(./sanitize-common)
+
+[settings]
+compiler.sanitizer=Thread
+
+[conf]
+tools.build:cflags+=["-fsanitize=thread"]
+tools.build:cxxflags+=["-fsanitize=thread"]
+tools.build:sharedlinkflags=["-fsanitize=thread"]
+tools.build:exelinkflags=["-fsanitize=thread"]

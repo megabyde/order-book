@@ -57,7 +57,8 @@ BENCH_ARGS ?= --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
 SANITIZE_STAMPS := \
 	$(STAMP_DIR)/sanitize.stamp \
 	$(STAMP_DIR)/sanitize-asan.stamp \
-	$(STAMP_DIR)/sanitize-ubsan.stamp
+	$(STAMP_DIR)/sanitize-ubsan.stamp \
+	$(STAMP_DIR)/sanitize-tsan.stamp
 FORMAT_SOURCES = $(shell find include src tests bench -type f \( -name '*.hpp' -o -name '*.cpp' \))
 CMAKE_FORMAT_SOURCES = CMakeLists.txt
 TIDY_SOURCES = $(shell find src tests bench -type f -name '*.cpp')
@@ -151,6 +152,9 @@ sanitize-asan: ## Build and test via the ASan workflow preset
 .PHONY: sanitize-ubsan
 sanitize-ubsan: ## Build and test via the UBSan workflow preset
 
+.PHONY: sanitize-tsan
+sanitize-tsan: ## Build and test via the TSan workflow preset
+
 .PHONY: coverage
 coverage: coverage-data-clean ## Build and test via the coverage workflow preset
 
@@ -166,7 +170,7 @@ docs: $(STAMP_DIR)/debug.stamp ## Generate Doxygen HTML documentation
 	cmake --preset docs
 	cmake --build --preset docs
 
-debug release sanitize sanitize-asan sanitize-ubsan: %: $(STAMP_DIR)/%.stamp
+debug release sanitize sanitize-asan sanitize-ubsan sanitize-tsan: %: $(STAMP_DIR)/%.stamp
 	cmake --workflow --preset $@
 
 # coverage reuses the debug Conan dependency graph (see the Conan configuration note above).

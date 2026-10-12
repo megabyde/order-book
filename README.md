@@ -190,8 +190,8 @@ cmake --workflow --preset release
 
 The setup is complete when the workflow exits successfully after running the tests.
 `cmake --workflow --preset <name>` runs configure, build, and test in one step; the Unix `make`
-targets call the same workflows. The `sanitize`, `sanitize-asan`, `sanitize-ubsan`, and `coverage`
-presets are Unix-only.
+targets call the same workflows. The `sanitize`, `sanitize-asan`, `sanitize-ubsan`, `sanitize-tsan`,
+and `coverage` presets are Unix-only.
 
 ## Development workflows
 

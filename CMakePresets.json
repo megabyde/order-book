@@ -38,6 +38,12 @@
             "inherits": "conan-debug-undefinedbehavior"
         },
         {
+            "name": "sanitize-tsan",
+            "displayName": "Sanitizers (TSan)",
+            "description": "Debug configuration with ThreadSanitizer instrumentation from the Conan sanitize-tsan profile.",
+            "inherits": "conan-debug-thread"
+        },
+        {
             "name": "coverage",
             "displayName": "Coverage",
             "description": "Debug configuration with coverage instrumentation enabled. Reuses the debug toolchain.",
@@ -84,6 +90,11 @@
         {
             "name": "sanitize-ubsan",
             "configurePreset": "sanitize-ubsan",
+            "configuration": "Debug"
+        },
+        {
+            "name": "sanitize-tsan",
+            "configurePreset": "sanitize-tsan",
             "configuration": "Debug"
         },
         {
@@ -143,6 +154,15 @@
             }
         },
         {
+            "name": "sanitize-tsan",
+            "inherits": "conan-debug-thread",
+            "configurePreset": "sanitize-tsan",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
             "name": "coverage",
             "configurePreset": "coverage",
             "configuration": "Debug",
@@ -190,6 +210,14 @@
                 { "type": "configure", "name": "sanitize-ubsan" },
                 { "type": "build", "name": "sanitize-ubsan" },
                 { "type": "test", "name": "sanitize-ubsan" }
+            ]
+        },
+        {
+            "name": "sanitize-tsan",
+            "steps": [
+                { "type": "configure", "name": "sanitize-tsan" },
+                { "type": "build", "name": "sanitize-tsan" },
+                { "type": "test", "name": "sanitize-tsan" }
             ]
         },
         {

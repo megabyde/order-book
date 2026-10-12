@@ -9,12 +9,12 @@
 # profiles/sanitize. `null` is the default (no sanitizer) and is omitted from
 # package_id, so non-sanitize builds are unaffected. Each value maps to a profile that
 # inherits profiles/sanitize-common: Address -> sanitize-asan, UndefinedBehavior ->
-# sanitize-ubsan, AddressUndefinedBehavior -> sanitize. To support another (e.g. Thread),
-# add its value here and a matching profile.
+# sanitize-ubsan, AddressUndefinedBehavior -> sanitize, Thread -> sanitize-tsan. To support
+# another, add its value here and a matching profile.
 compiler:
   apple-clang:
-    sanitizer: [null, Address, UndefinedBehavior, AddressUndefinedBehavior]
+    sanitizer: [null, Address, UndefinedBehavior, AddressUndefinedBehavior, Thread]
   clang:
-    sanitizer: [null, Address, UndefinedBehavior, AddressUndefinedBehavior]
+    sanitizer: [null, Address, UndefinedBehavior, AddressUndefinedBehavior, Thread]
   gcc:
-    sanitizer: [null, Address, UndefinedBehavior, AddressUndefinedBehavior]
+    sanitizer: [null, Address, UndefinedBehavior, AddressUndefinedBehavior, Thread]
