@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <limits>
 #include <memory>
 #include <ranges>
 #include <string>
@@ -19,6 +20,24 @@ namespace {
 template <typename T>
 std::expected<T, std::string> parse_uint(std::string_view text, std::string_view name)
 {
+    // Up to digits10 digits cannot overflow T. Nearly every field is that short, and this loop is
+    // several times faster than std::from_chars, which handles the rest, errors included.
+    if (!text.empty() && text.size() <= std::numeric_limits<T>::digits10) {
+        constexpr T base = 10;
+        T value = 0;
+        auto digits = true;
+        for (const auto c : text) {
+            if (c < '0' || c > '9') {
+                digits = false;
+                break;
+            }
+            value = (value * base) + static_cast<T>(c - '0');
+        }
+        if (digits) {
+            return value;
+        }
+    }
+
     T value{};
     const auto* const end = std::to_address(text.end());
     const auto [ptr, ec] = std::from_chars(std::to_address(text.begin()), end, value);

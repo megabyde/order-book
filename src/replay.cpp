@@ -3,7 +3,6 @@
 #include <order_book/replay.hpp>
 
 #include <algorithm>
-#include <array>
 #include <charconv>
 #include <condition_variable>
 #include <cstddef>
@@ -37,23 +36,46 @@ constexpr std::size_t batch_size = std::size_t{1} << 20U;
 // Batches read ahead of the one being written out
 constexpr std::size_t batches_in_flight = 4;
 
-void append_uint(std::string& buffer, std::uint64_t value)
+constexpr std::size_t max_digits = std::numeric_limits<std::uint64_t>::digits10 + 1;
+
+char* write_uint(char* out, std::uint64_t value)
 {
-    std::array<char, std::numeric_limits<std::uint64_t>::digits10 + 1> digits{};
-    auto* const end = std::to_chars(digits.data(), digits.data() + digits.size(), value).ptr;
-    buffer.append(digits.data(), end);
+    return std::to_chars(out, out + max_digits, value).ptr;
 }
 
-void append_level(std::string& buffer, const std::optional<Level>& level)
+char* write_level(char* out, const std::optional<Level>& level)
 {
     if (level) {
-        append_uint(buffer, level->price);
-        buffer += ',';
-        append_uint(buffer, level->quantity);
+        out = write_uint(out, level->price);
+        *out++ = ',';
+        out = write_uint(out, level->quantity);
     }
     else {
-        buffer += ',';
+        *out++ = ',';
     }
+    return out;
+}
+
+// Append `<TIME>,<TICKER>,<BBP>,<BBQ>,<BAP>,<BAQ>` and a newline in one write, rather than a
+// std::string call per field
+void append_line(std::string& text, std::uint64_t time, std::string_view ticker, const Bbo& bbo)
+{
+    const auto size = text.size();
+    const auto longest = size + ticker.size() + (5 * max_digits) + 6;
+    if (longest > text.capacity()) {
+        text.reserve(std::max(longest, 2 * text.capacity()));
+    }
+    text.resize_and_overwrite(longest, [&](char* data, std::size_t) {
+        auto* out = write_uint(data + size, time);
+        *out++ = ',';
+        out = std::ranges::copy(ticker, out).out;
+        *out++ = ',';
+        out = write_level(out, bbo.bid);
+        *out++ = ',';
+        out = write_level(out, bbo.ask);
+        *out++ = '\n';
+        return static_cast<std::size_t>(out - data);
+    });
 }
 
 std::string describe(BookError error, std::string_view order)
@@ -202,16 +224,8 @@ private:
             return false;
         }
         if (const auto after = book->second.bbo(); after != before) {
-            auto& text = output.text;
-            append_uint(text, message->time);
-            text += ',';
-            text += message->ticker;
-            text += ',';
-            append_level(text, after.bid);
-            text += ',';
-            append_level(text, after.ask);
-            text += '\n';
-            output.lines.emplace_back(number, text.size());
+            append_line(output.text, message->time, message->ticker, after);
+            output.lines.emplace_back(number, output.text.size());
         }
         ++output.events;
         return true;
