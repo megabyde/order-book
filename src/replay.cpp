@@ -218,13 +218,13 @@ private:
             book = m_books.emplace(std::string(message->ticker), OrderBook{}).first;
         }
 
-        const auto before = book->second.bbo();
-        if (const auto applied = book->second.apply(message->order, message->event); !applied) {
+        const auto applied = book->second.apply(message->order, message->event);
+        if (!applied) {
             output.failure.emplace(number, describe(applied.error(), message->order));
             return false;
         }
-        if (const auto after = book->second.bbo(); after != before) {
-            append_line(output.text, message->time, message->ticker, after);
+        if (*applied) {
+            append_line(output.text, message->time, message->ticker, book->second.bbo());
             output.lines.emplace_back(number, output.text.size());
         }
         ++output.events;
