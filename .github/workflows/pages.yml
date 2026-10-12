@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('pages-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 
 permissions:
@@ -22,15 +22,17 @@ jobs:
       # Tool pins (CONAN_VERSION, DOXYGEN_VERSION) live in .github/ci.env, shared
       # across workflows.
       - name: Load CI env
-        run: cat .github/ci.env >> "$GITHUB_ENV"
+        run: |
+          cat .github/ci.env >> "$GITHUB_ENV"
+          echo "RUNNER_IMAGE=$ImageOS-$ImageVersion" >> "$GITHUB_ENV"
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
       - uses: actions/cache@v6
         with:
           path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-docs-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-docs-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
+          key: conan-${{ env.CONAN_VERSION }}-docs-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-docs-${{ env.RUNNER_IMAGE }}-
       - name: Install Doxygen
         # shell: bash for pipefail, which --fail below depends on. The default runner shell sets -e
         # but not pipefail, and there --fail makes things worse rather than better: curl writes
