@@ -149,7 +149,10 @@ endfunction()
 # Non-main code lives in a library so the application and the tests link the same artifact instead
 # of recompiling sources. Include dirs and the language standard are PUBLIC so both consumers
 # inherit them.
-add_library(order_book_lib STATIC src/feed.cpp src/itch.cpp src/order_book.cpp src/replay.cpp)
+add_library(
+    order_book_lib STATIC src/feed.cpp src/itch.cpp src/itch_market.cpp src/order_book.cpp
+                          src/replay.cpp
+)
 target_include_directories(order_book_lib PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(order_book_lib PUBLIC cxx_std_23)
 enable_project_options(order_book_lib)
@@ -174,6 +177,7 @@ install(TARGETS order_book RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # --- documentation ---------------------------------------------------------
 if(Doxygen_FOUND)
+    set(DOXYGEN_EXCLUDE_SYMBOLS order_book::itch_detail)
     set(DOXYGEN_EXTRACT_ALL NO)
     set(DOXYGEN_FULL_PATH_NAMES NO)
     # Copies LICENSE next to index.html so README's license badge (a relative ./LICENSE link)
@@ -266,6 +270,15 @@ if(BUILD_TESTING)
             ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
     )
     add_test(
+        NAME AppTest.ReplaysWideReferences
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book>
+            -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/wide_references.csv
+            -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/wide_references.expected
+            -DACTUAL=${PROJECT_BINARY_DIR}/wide_references.actual -P
+            ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
+    )
+    add_test(
         NAME AppTest.ReplaysSampleWithFormatFlag
         COMMAND
             ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=--format=csv
@@ -304,6 +317,17 @@ if(BUILD_TESTING)
                 -DCSV=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
                 -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/sample.expected
                 -DWORK=${PROJECT_BINARY_DIR}/sample_itch -P
+                ${PROJECT_SOURCE_DIR}/tests/replay_itch.cmake
+        )
+        # Order IDs of 2^31 and above, shared by two tickers, and in the way of replacements
+        add_test(
+            NAME AppTest.ReplaysWideReferencesItch
+            COMMAND
+                ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DPYTHON=${Python3_EXECUTABLE}
+                -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+                -DCSV=${PROJECT_SOURCE_DIR}/tests/data/wide_references.csv
+                -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/wide_references.expected
+                -DWORK=${PROJECT_BINARY_DIR}/wide_references_itch -P
                 ${PROJECT_SOURCE_DIR}/tests/replay_itch.cmake
         )
     endif()

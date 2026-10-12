@@ -2,34 +2,42 @@
 
 #include <order_book/feed.hpp>
 #include <order_book/itch.hpp>
+#include <order_book/itch_market.hpp>
+#include <order_book/order_book.hpp>
 #include <order_book/replay.hpp>
 
 #include "itch_messages.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <format>
+#include <initializer_list>
+#include <map>
+#include <optional>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
-using order_book::AddOrder;
 using order_book::decode_itch;
-using order_book::DeleteOrder;
-using order_book::ExecuteOrder;
 using order_book::Format;
-using order_book::ItchEvent;
-using order_book::NoOp;
-using order_book::ReplaceOrder;
+using order_book::ItchKind;
+using order_book::ItchMessage;
+using order_book::Price;
+using order_book::Quantity;
 using order_book::Side;
-using order_book::Skipped;
 using testing::TestParamInfo;
 using testing::TestWithParam;
 using testing::Values;
 
-// NOLINTBEGIN(readability-magic-numbers)
+// The message builders take each kind's fields positionally, as the specification lists them
+// NOLINTBEGIN(readability-magic-numbers,bugprone-easily-swappable-parameters)
 
 namespace {
 
@@ -58,6 +66,24 @@ std::string replay_error(std::string_view feed, std::size_t threads, std::string
     return {};
 }
 
+// What decode_itch() makes of a message with the builders' locate 1 and time 2, given the fields
+// its kind sets
+ItchMessage decoded(ItchKind kind, std::uint64_t order, std::uint64_t replacement,
+                    std::string_view stock, Quantity shares, Price price, Side side = Side::Buy)
+{
+    return ItchMessage{
+        .time = 2,
+        .order = order,
+        .replacement = replacement,
+        .stock = stock,
+        .shares = shares,
+        .price = price,
+        .locate = 1,
+        .kind = kind,
+        .side = side,
+    };
+}
+
 TEST(ItchTest, DecodesAddsAndTheHeader)
 {
     // A timestamp above 32 bits exercises both of its parts
@@ -65,53 +91,64 @@ TEST(ItchTest, DecodesAddsAndTheHeader)
     // The decoded stock views the message, so the message must outlive it
     const auto plain_bytes = itch::add(7, time, 42, 'B', 300, "AAPL", 1'234'500);
     const auto plain = decode_itch(plain_bytes);
-    ASSERT_TRUE(plain) << plain.error();
-    EXPECT_EQ(plain->time, time);
-    EXPECT_EQ(plain->locate, 7);
-    EXPECT_EQ(plain->stock, "AAPL");
-    EXPECT_EQ(plain->order, 42U);
-    const ItchEvent expected = AddOrder{.side = Side::Buy, .price = 1'234'500, .shares = 300};
-    EXPECT_EQ(plain->event, expected);
+    ASSERT_TRUE(plain) << describe(plain.error());
+    auto expected = decoded(ItchKind::Add, 42, 0, "AAPL    ", 300, 1'234'500);
+    expected.time = time;
+    expected.locate = 7;
+    EXPECT_EQ(*plain, expected);
 
-    // F carries an attribution and the same fields; a full 8-character symbol has no padding
-    const auto attributed_bytes = itch::add(8, 1, 43, 'S', 5, "ABCDEFGH", 10, "MPID");
+    // F carries an attribution and the same fields
+    const auto attributed_bytes = itch::add(1, 2, 43, 'S', 5, "ABCDEFGH", 10, "MPID");
     const auto attributed = decode_itch(attributed_bytes);
-    ASSERT_TRUE(attributed) << attributed.error();
-    EXPECT_EQ(attributed->stock, "ABCDEFGH");
-    const ItchEvent sell = AddOrder{.side = Side::Sell, .price = 10, .shares = 5};
-    EXPECT_EQ(attributed->event, sell);
+    ASSERT_TRUE(attributed) << describe(attributed.error());
+    EXPECT_EQ(*attributed, decoded(ItchKind::Add, 43, 0, "ABCDEFGH", 5, 10, Side::Sell));
 }
 
-struct EventCase {
+struct KindCase {
     std::string_view name;
     std::string message;
-    std::uint64_t order;
-    ItchEvent event;
+    ItchMessage expected;
 };
 
-class ItchEventTest : public TestWithParam<EventCase> {};
+class ItchKindTest : public TestWithParam<KindCase> {};
 
-TEST_P(ItchEventTest, MapsTypeToEvent)
+TEST_P(ItchKindTest, MapsTypeToKind)
 {
     const auto message = decode_itch(GetParam().message);
-    ASSERT_TRUE(message) << message.error();
-    EXPECT_EQ(message->order, GetParam().order);
-    EXPECT_EQ(message->event, GetParam().event);
+    ASSERT_TRUE(message) << describe(message.error());
+    EXPECT_EQ(*message, GetParam().expected);
 }
 
+const ItchMessage skipped{
+    .time = 0,
+    .order = 0,
+    .replacement = 0,
+    .stock = {},
+    .shares = 0,
+    .price = 0,
+    .locate = 0,
+    .kind = ItchKind::Skipped,
+    .side = Side::Buy,
+};
+
 INSTANTIATE_TEST_SUITE_P(
-    Types, ItchEventTest,
-    Values(EventCase{"Executed", itch::executed(1, 2, 42, 30), 42, ExecuteOrder{30}},
-           EventCase{"ExecutedWithPrice", itch::executed(1, 2, 42, 30, 999), 42, ExecuteOrder{30}},
-           EventCase{"Cancel", itch::cancel(1, 2, 42, 20), 42, ExecuteOrder{20}},
-           EventCase{"Delete", itch::remove(1, 2, 42), 42, DeleteOrder{}},
-           EventCase{"Replace", itch::replace(1, 2, 42, 43, 70, 1005), 42,
-                     ReplaceOrder{.order = 43, .price = 1005, .shares = 70}},
-           EventCase{"Trade", itch::trade(1, 2, 10, "AAPL", 1000), 0, NoOp{}},
-           EventCase{"Cross", itch::cross(1, 2, 10, "AAPL", 1000), 0, NoOp{}},
-           EventCase{"SystemEvent", itch::system_event(2, 'O'), 0, Skipped{}},
-           EventCase{"Directory", itch::header('R', 1, 2) + std::string(28, ' '), 0, Skipped{}}),
-    [](const TestParamInfo<EventCase>& info) { return std::string(info.param.name); });
+    Types, ItchKindTest,
+    Values(KindCase{"Executed", itch::executed(1, 2, 42, 30),
+                    decoded(ItchKind::Execute, 42, 0, {}, 30, 0)},
+           KindCase{"ExecutedWithPrice", itch::executed(1, 2, 42, 30, 999),
+                    decoded(ItchKind::Execute, 42, 0, {}, 30, 0)},
+           KindCase{"Cancel", itch::cancel(1, 2, 42, 20),
+                    decoded(ItchKind::Execute, 42, 0, {}, 20, 0)},
+           KindCase{"Delete", itch::remove(1, 2, 42), decoded(ItchKind::Delete, 42, 0, {}, 0, 0)},
+           KindCase{"Replace", itch::replace(1, 2, 42, 43, 70, 1005),
+                    decoded(ItchKind::Replace, 42, 43, {}, 70, 1005)},
+           KindCase{"Trade", itch::trade(1, 2, 10, "AAPL", 1000),
+                    decoded(ItchKind::Trade, 0, 0, {}, 0, 0)},
+           KindCase{"Cross", itch::cross(1, 2, 10, "AAPL", 1000),
+                    decoded(ItchKind::Trade, 0, 0, {}, 0, 0)},
+           KindCase{"SystemEvent", itch::system_event(2, 'O'), skipped},
+           KindCase{"Directory", itch::header('R', 1, 2) + std::string(28, ' '), skipped}),
+    [](const TestParamInfo<KindCase>& info) { return std::string(info.param.name); });
 
 struct MalformedCase {
     std::string_view name;
@@ -125,8 +162,10 @@ TEST_P(ItchMalformedTest, RejectsWithMessage)
 {
     const auto message = decode_itch(GetParam().message);
     ASSERT_FALSE(message) << "accepted: " << GetParam().name;
-    EXPECT_EQ(message.error(), GetParam().error);
+    EXPECT_EQ(describe(message.error()), GetParam().error);
 }
+
+constexpr auto first_out_of_range = order_book::max_itch_order;
 
 INSTANTIATE_TEST_SUITE_P(
     Messages, ItchMalformedTest,
@@ -136,8 +175,478 @@ INSTANTIATE_TEST_SUITE_P(
                          "'A' message has 35 bytes, expected 36"},
            MalformedCase{"LongDelete", itch::remove(1, 2, 3) + 'x',
                          "'D' message has 20 bytes, expected 19"},
-           MalformedCase{"BadSide", itch::add(1, 2, 3, 'X', 4, "A", 5), "invalid side 0x58"}),
+           MalformedCase{"BadSide", itch::add(1, 2, 3, 'X', 4, "A", 5), "invalid side 0x58"},
+           MalformedCase{"OrderOutOfRange", itch::add(1, 2, first_out_of_range, 'B', 4, "A", 5),
+                         "order reference out of range: 4294967296"},
+           MalformedCase{"ReplacementOutOfRange", itch::replace(1, 2, 3, first_out_of_range, 4, 5),
+                         "order reference out of range: 4294967296"}),
     [](const TestParamInfo<MalformedCase>& info) { return std::string(info.param.name); });
+
+TEST(ItchTest, AcceptsTheLastReferenceInRange)
+{
+    const auto message = decode_itch(itch::remove(1, 2, first_out_of_range - 1));
+    ASSERT_TRUE(message) << describe(message.error());
+    EXPECT_EQ(message->order, first_out_of_range - 1);
+}
+
+ItchMessage add_message(std::uint16_t locate, std::uint64_t order, Side side, Price price,
+                        Quantity shares)
+{
+    auto message = decoded(ItchKind::Add, order, 0, "S       ", shares, price, side);
+    message.locate = locate;
+    return message;
+}
+
+ItchMessage order_message(ItchKind kind, std::uint16_t locate, std::uint64_t order,
+                          Quantity shares = 0)
+{
+    auto message = decoded(kind, order, 0, {}, shares, 0);
+    message.locate = locate;
+    return message;
+}
+
+ItchMessage replace_message(std::uint16_t locate, std::uint64_t order, std::uint64_t replacement,
+                            Quantity shares, Price price)
+{
+    auto message = decoded(ItchKind::Replace, order, replacement, {}, shares, price);
+    message.locate = locate;
+    return message;
+}
+
+order_book::Bbo bbo(std::optional<order_book::Level> bid, std::optional<order_book::Level> ask)
+{
+    return order_book::Bbo{.bid = bid, .ask = ask};
+}
+
+using order_book::BookError;
+using order_book::ItchMarket;
+using order_book::Level;
+
+TEST(ItchMarketTest, ReplaceKeepsTheSideAndMovesTheOrder)
+{
+    ItchMarket market;
+    ASSERT_TRUE(market.apply(add_message(1, 1, Side::Buy, 1000, 100)));
+    ASSERT_TRUE(market.apply(add_message(1, 2, Side::Sell, 1010, 50)));
+
+    // A new best bid: the replacement rests on the buy side at its own price and size
+    EXPECT_EQ(market.apply(replace_message(1, 1, 3, 70, 1005)), true);
+    EXPECT_EQ(market.bbo(1), bbo(Level{1005, 70}, Level{1010, 50}));
+    EXPECT_EQ(market.order_count(), 2U);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, 1)),
+              std::unexpected(BookError::UnknownOrder));
+
+    // Replacing an order by the same reference number is a replacement like any other
+    EXPECT_EQ(market.apply(replace_message(1, 3, 3, 60, 1005)), true);
+    EXPECT_EQ(market.bbo(1), bbo(Level{1005, 60}, Level{1010, 50}));
+
+    // Below the best, a replacement leaves the BBO alone
+    ASSERT_TRUE(market.apply(add_message(1, 4, Side::Buy, 990, 10)));
+    EXPECT_EQ(market.apply(replace_message(1, 4, 5, 20, 980)), false);
+    EXPECT_EQ(market.bbo(1), bbo(Level{1005, 60}, Level{1010, 50}));
+    EXPECT_EQ(market.level_count(), 3U);
+}
+
+// Orders 1 and 2 in locates 1 and 2, the starting point of the rejection tests
+ItchMarket two_orders()
+{
+    ItchMarket market;
+    EXPECT_TRUE(market.apply(add_message(1, 1, Side::Buy, 1000, 100)));
+    EXPECT_TRUE(market.apply(add_message(2, 2, Side::Sell, 1010, 10)));
+    return market;
+}
+
+testing::AssertionResult unchanged(const ItchMarket& market)
+{
+    if (market.bbo(1) != bbo(Level{.price = 1000, .quantity = 100}, {}) ||
+        market.bbo(2) != bbo({}, Level{.price = 1010, .quantity = 10}) ||
+        market.order_count() != 2) {
+        return testing::AssertionFailure() << "the market changed";
+    }
+    return testing::AssertionSuccess();
+}
+
+TEST(ItchMarketTest, RejectsLiveReferencesAndChangesNothing)
+{
+    auto market = two_orders();
+    EXPECT_EQ(market.apply(add_message(1, 1, Side::Sell, 900, 5)),
+              std::unexpected(BookError::DuplicateOrder));
+    EXPECT_EQ(market.apply(add_message(2, 2, Side::Buy, 900, 5)),
+              std::unexpected(BookError::DuplicateOrder));
+    EXPECT_TRUE(unchanged(market));
+    EXPECT_EQ(market.bbo(3), bbo({}, {}));
+    EXPECT_EQ(market.bbo(4000), bbo({}, {}));
+}
+
+// Order 1 in three locates at once, as one order ID may be in several CSV tickers
+ItchMarket shared_order()
+{
+    ItchMarket market;
+    EXPECT_EQ(market.apply(add_message(1, 1, Side::Buy, 1000, 100)), true);
+    EXPECT_EQ(market.apply(add_message(2, 1, Side::Sell, 2000, 10)), true);
+    EXPECT_EQ(market.apply(add_message(3, 1, Side::Buy, 3000, 30)), true);
+    return market;
+}
+
+TEST(ItchMarketTest, KeepsReferenceNumbersPerLocate)
+{
+    auto market = shared_order();
+    EXPECT_EQ(market.order_count(), 3U);
+    EXPECT_EQ(market.apply(add_message(2, 1, Side::Buy, 900, 5)),
+              std::unexpected(BookError::DuplicateOrder));
+
+    // Deleting the order that holds the index slot, and with it its page, leaves the others
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, 1)), true);
+    EXPECT_EQ(market.apply(add_message(2, 1, Side::Buy, 900, 5)),
+              std::unexpected(BookError::DuplicateOrder));
+    EXPECT_EQ(market.apply(order_message(ItchKind::Execute, 2, 1, 4)), true);
+    EXPECT_EQ(market.bbo(2), bbo({}, Level{2000, 6}));
+    EXPECT_EQ(market.bbo(3), bbo(Level{3000, 30}, {}));
+    EXPECT_EQ(market.order_count(), 2U);
+}
+
+TEST(ItchMarketTest, ReplacesIntoReferenceNumbersOnlyOtherLocatesHold)
+{
+    auto market = shared_order();
+    ASSERT_TRUE(market.apply(add_message(3, 2, Side::Buy, 2990, 1)));
+    EXPECT_EQ(market.apply(replace_message(3, 2, 1, 1, 1)),
+              std::unexpected(BookError::DuplicateOrder));
+    EXPECT_EQ(market.apply(replace_message(2, 1, 2, 7, 1990)), true);
+    EXPECT_EQ(market.bbo(2), bbo({}, Level{1990, 7}));
+    EXPECT_EQ(market.bbo(3), bbo(Level{3000, 30}, {}));
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 2, 1)),
+              std::unexpected(BookError::UnknownOrder));
+    EXPECT_EQ(market.order_count(), 4U);
+}
+
+// Delete each order of `orders`, by locate and reference number, each changing its BBO
+testing::AssertionResult
+delete_best(ItchMarket& market,
+            std::initializer_list<std::pair<std::uint16_t, std::uint64_t>> orders)
+{
+    for (const auto& [locate, order] : orders) {
+        if (market.apply(order_message(ItchKind::Delete, locate, order)) != true) {
+            return testing::AssertionFailure()
+                   << "delete of order " << order << " in locate " << locate;
+        }
+    }
+    return testing::AssertionSuccess();
+}
+
+TEST(ItchMarketTest, EmptiesOrdersSharingReferenceNumbers)
+{
+    // Orders 1 and 2 each in the index once and in the side map for the other locates
+    auto market = shared_order();
+    ASSERT_TRUE(market.apply(add_message(3, 2, Side::Buy, 2990, 1)));
+    ASSERT_TRUE(market.apply(add_message(2, 2, Side::Sell, 1990, 1)));
+    EXPECT_TRUE(delete_best(market, {{3, 1}, {1, 1}, {2, 2}, {3, 2}, {2, 1}}));
+    EXPECT_EQ(market.order_count(), 0U);
+    EXPECT_EQ(market.level_count(), 0U);
+    // Nothing is left behind in the index or the side map
+    EXPECT_EQ(market.apply(add_message(1, 1, Side::Buy, 1000, 1)), true);
+    EXPECT_EQ(market.apply(add_message(2, 1, Side::Buy, 1000, 1)), true);
+    EXPECT_EQ(market.apply(add_message(3, 1, Side::Buy, 1000, 1)), true);
+}
+
+class ItchUnknownOrderTest : public TestWithParam<ItchKind> {};
+
+TEST_P(ItchUnknownOrderTest, RejectsAndChangesNothing)
+{
+    auto market = two_orders();
+    // Order 9 does not exist, order 2 lives in locate 2, not 1, and order 10^9 lies far past any
+    // page yet allocated
+    for (const std::uint64_t order : {9, 2, 1'000'000'000}) {
+        EXPECT_EQ(market.apply(order_message(GetParam(), 1, order, 1)),
+                  std::unexpected(BookError::UnknownOrder))
+            << "order " << order;
+    }
+    EXPECT_TRUE(unchanged(market));
+}
+
+std::string kind_name(const TestParamInfo<ItchKind>& info)
+{
+    constexpr std::array<std::string_view, 6> names{
+        "Add", "Execute", "Delete", "Replace", "Trade", "Skipped",
+    };
+    return std::string(names.at(static_cast<std::size_t>(info.param)));
+}
+
+INSTANTIATE_TEST_SUITE_P(Kinds, ItchUnknownOrderTest,
+                         Values(ItchKind::Execute, ItchKind::Delete, ItchKind::Replace), kind_name);
+
+TEST(ItchMarketTest, ReportsWhetherBboChanged)
+{
+    ItchMarket market;
+    EXPECT_EQ(market.apply(add_message(1, 1, Side::Buy, 1000, 100)), true);
+    // A deeper level, and a 0-share add at the best price, leave the BBO as it was
+    EXPECT_EQ(market.apply(add_message(1, 2, Side::Buy, 990, 100)), false);
+    EXPECT_EQ(market.apply(add_message(1, 3, Side::Buy, 1000, 0)), false);
+    // An execution of 0 shares at the best changes nothing
+    EXPECT_EQ(market.apply(order_message(ItchKind::Execute, 1, 1, 0)), false);
+    // A 0-share add above the best still moves the price, and executing its 0 shares takes all
+    // that remains, removing it
+    EXPECT_EQ(market.apply(add_message(1, 4, Side::Buy, 1010, 0)), true);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Execute, 1, 4, 0)), true);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, 4)),
+              std::unexpected(BookError::UnknownOrder));
+    // Executions are clamped; emptying a level below the best changes nothing
+    EXPECT_EQ(market.apply(order_message(ItchKind::Execute, 1, 2, 1000)), false);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Execute, 1, 1, 40)), true);
+    EXPECT_EQ(market.bbo(1), bbo(Level{1000, 60}, {}));
+    // Trades and skipped messages touch nothing
+    EXPECT_EQ(market.apply(order_message(ItchKind::Trade, 1, 0)), false);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Skipped, 0, 0)), false);
+    EXPECT_EQ(market.level_count(), 1U);
+}
+
+// Add `count` one-share orders over 7 levels, then delete them all
+testing::AssertionResult fill_and_empty(ItchMarket& market, std::uint64_t count)
+{
+    for (std::uint64_t order = 1; order <= count; ++order) {
+        const auto price = static_cast<Price>(1000 + (order % 7));
+        if (!market.apply(add_message(1, order, Side::Sell, price, 1))) {
+            return testing::AssertionFailure() << "add " << order << " failed";
+        }
+    }
+    if (market.order_count() != count || market.level_count() != 7) {
+        return testing::AssertionFailure()
+               << market.order_count() << " orders, " << market.level_count() << " levels";
+    }
+    for (std::uint64_t order = 1; order <= count; ++order) {
+        if (!market.apply(order_message(ItchKind::Delete, 1, order))) {
+            return testing::AssertionFailure() << "delete " << order << " failed";
+        }
+    }
+    return testing::AssertionSuccess();
+}
+
+TEST(ItchMarketTest, ReusesEmptiedPagesAndSlots)
+{
+    // Several pages of reference numbers, emptied and filled again
+    ItchMarket market;
+    for (int round = 0; round < 2; ++round) {
+        ASSERT_TRUE(fill_and_empty(market, 30'000)) << "round " << round;
+        EXPECT_EQ(market.order_count(), 0U);
+        EXPECT_EQ(market.level_count(), 0U);
+        EXPECT_EQ(market.bbo(1), bbo({}, {}));
+    }
+}
+
+// Both sides of a page boundary and of a 256-page chunk boundary, and the last reference
+constexpr std::array<std::uint64_t, 6> spread_orders{
+    1, 255, 256, 65'535, 65'536, first_out_of_range - 1,
+};
+
+// Sell spread_orders[i] at 1000 + i, 10 * (i + 1) shares, so the orders' asks rise in their order
+ItchMarket spread_market()
+{
+    ItchMarket market;
+    for (std::size_t i = 0; i < spread_orders.size(); ++i) {
+        EXPECT_TRUE(market.apply(add_message(1, spread_orders[i], Side::Sell,
+                                             static_cast<Price>(1000 + i), 10 * (i + 1))))
+            << spread_orders[i];
+    }
+    return market;
+}
+
+// Delete the best ask of spread_market() until none is left, checking each order is the one shown
+testing::AssertionResult delete_spread(ItchMarket& market)
+{
+    for (std::size_t i = 0; i < spread_orders.size(); ++i) {
+        const auto ask = Level{.price = static_cast<Price>(1000 + i), .quantity = 10 * (i + 1)};
+        if (market.bbo(1) != bbo({}, ask)) {
+            return testing::AssertionFailure() << "best ask before deleting " << spread_orders[i];
+        }
+        if (market.apply(order_message(ItchKind::Delete, 1, spread_orders[i])) != true) {
+            return testing::AssertionFailure() << "delete " << spread_orders[i];
+        }
+    }
+    return testing::AssertionSuccess();
+}
+
+TEST(ItchMarketTest, IndexesTheWholeReferenceRange)
+{
+    auto market = spread_market();
+    EXPECT_EQ(market.order_count(), spread_orders.size());
+    // An unused page of a used chunk, an unused chunk, and a locate the orders are not in
+    const auto unknown = std::unexpected(BookError::UnknownOrder);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, 65'536 + 256)), unknown);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, std::uint64_t{1} << 20U)), unknown);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 2, spread_orders.back())), unknown);
+    EXPECT_TRUE(delete_spread(market));
+    EXPECT_EQ(market.order_count(), 0U);
+}
+
+// The BBO of each locate from a model that keeps every level's total in a std::map
+class MarketModel {
+public:
+    void add(std::uint16_t locate, std::uint64_t order, Side side, Price price, Quantity shares)
+    {
+        m_orders[{locate, order}] = Resting{.side = side, .price = price, .remaining = shares};
+        auto& level = levels(locate, side)[price];
+        level.total += shares;
+        ++level.orders;
+    }
+    void take(std::uint16_t locate, std::uint64_t order, Quantity shares)
+    {
+        auto& resting = m_orders.at({locate, order});
+        auto& side = levels(locate, resting.side);
+        auto& level = side.at(resting.price);
+        level.total -= shares;
+        resting.remaining -= shares;
+        if (resting.remaining == 0) {
+            if (--level.orders == 0) {
+                side.erase(resting.price);
+            }
+            m_orders.erase({locate, order});
+        }
+    }
+    [[nodiscard]] order_book::Bbo bbo(std::uint16_t locate)
+    {
+        order_book::Bbo result;
+        if (const auto& bids = levels(locate, Side::Buy); !bids.empty()) {
+            result.bid =
+                Level{.price = bids.rbegin()->first, .quantity = bids.rbegin()->second.total};
+        }
+        if (const auto& asks = levels(locate, Side::Sell); !asks.empty()) {
+            result.ask =
+                Level{.price = asks.begin()->first, .quantity = asks.begin()->second.total};
+        }
+        return result;
+    }
+    [[nodiscard]] const auto& orders() const { return m_orders; }
+    [[nodiscard]] bool live(std::uint16_t locate, std::uint64_t order) const
+    {
+        return m_orders.contains({locate, order});
+    }
+
+private:
+    struct Resting {
+        Side side;
+        Price price;
+        Quantity remaining;
+    };
+    struct Total {
+        Quantity total = 0;
+        std::size_t orders = 0;
+    };
+    std::map<Price, Total>& levels(std::uint16_t locate, Side side)
+    {
+        return m_levels[{locate, side}];
+    }
+    std::map<std::pair<std::uint16_t, std::uint64_t>, Resting> m_orders;
+    std::map<std::pair<std::uint16_t, Side>, std::map<Price, Total>> m_levels;
+};
+
+// One random add, execution, replacement, or delete, applied to the market and the model, then
+// checked against the model's BBO before and after. Some adds and replacements take a reference
+// number that another locate holds.
+class Churn {
+public:
+    testing::AssertionResult step(bool adding)
+    {
+        if (m_live.empty() || (adding && m_random() % 3 != 0)) {
+            return add();
+        }
+        const auto index = m_random() % m_live.size();
+        const auto [locate, order] = m_live[index];
+        const auto& resting = m_model.orders().at({locate, order});
+        const auto before = m_model.bbo(locate);
+        std::expected<bool, BookError> changed = false;
+        switch (m_random() % 3) {
+        case 0: {
+            const auto shares = 1 + (m_random() % resting.remaining);
+            changed = m_market.apply(order_message(ItchKind::Execute, locate, order, shares));
+            m_model.take(locate, order, shares);
+            break;
+        }
+        case 1: {
+            const auto side = resting.side;
+            const auto price = random_price();
+            const auto shares = random_shares();
+            const auto replacement = reference(locate);
+            changed = m_market.apply(replace_message(locate, order, replacement, shares, price));
+            m_model.take(locate, order, resting.remaining);
+            m_model.add(locate, replacement, side, price, shares);
+            m_live.emplace_back(locate, replacement);
+            break;
+        }
+        default:
+            changed = m_market.apply(order_message(ItchKind::Delete, locate, order));
+            m_model.take(locate, order, resting.remaining);
+            break;
+        }
+        if (!m_model.live(locate, order)) {
+            m_live[index] = m_live.back();
+            m_live.pop_back();
+        }
+        return check(locate, before, changed);
+    }
+
+    [[nodiscard]] std::size_t orders() const { return m_market.order_count(); }
+    [[nodiscard]] std::size_t model_orders() const { return m_model.orders().size(); }
+
+private:
+    testing::AssertionResult add()
+    {
+        const auto locate = static_cast<std::uint16_t>(1 + (m_random() % 5));
+        const auto side = m_random() % 2 == 0 ? Side::Buy : Side::Sell;
+        const auto price = random_price();
+        const auto shares = random_shares();
+        const auto order = reference(locate);
+        const auto before = m_model.bbo(locate);
+        const auto changed = m_market.apply(add_message(locate, order, side, price, shares));
+        m_model.add(locate, order, side, price, shares);
+        m_live.emplace_back(locate, order);
+        return check(locate, before, changed);
+    }
+
+    // A reference number not live in `locate`: one in four times that of a random live order, if
+    // that is of another locate, else a new one
+    std::uint64_t reference(std::uint16_t locate)
+    {
+        if (!m_live.empty() && m_random() % 4 == 0) {
+            const auto order = m_live[m_random() % m_live.size()].second;
+            if (!m_model.live(locate, order)) {
+                return order;
+            }
+        }
+        // Skip some reference numbers, so the orders spread over pages
+        const auto order = m_next;
+        m_next += 1 + (m_random() % 3);
+        return order;
+    }
+
+    testing::AssertionResult check(std::uint16_t locate, const order_book::Bbo& before,
+                                   const std::expected<bool, BookError>& changed)
+    {
+        const auto after = m_model.bbo(locate);
+        if (!changed || m_market.bbo(locate) != after || *changed != (after != before)) {
+            return testing::AssertionFailure() << "locate " << locate << " disagrees";
+        }
+        return testing::AssertionSuccess();
+    }
+
+    Price random_price() { return static_cast<Price>(1000 + (m_random() % 40 * 10)); }
+    Quantity random_shares() { return static_cast<Quantity>(1 + (m_random() % 100)); }
+
+    // std::mt19937's output sequence is fixed by the standard, unlike the distributions
+    std::mt19937 m_random{7}; // NOLINT(bugprone-random-generator-seed)
+    ItchMarket m_market;
+    MarketModel m_model;
+    std::vector<std::pair<std::uint16_t, std::uint64_t>> m_live;
+    std::uint64_t m_next = 1;
+};
+
+TEST(ItchMarketTest, MatchesModelUnderChurn)
+{
+    // Two adds in three during the first half, then removals and replacements only
+    Churn churn;
+    constexpr int steps = 60'000;
+    for (int step = 0; step < steps; ++step) {
+        ASSERT_TRUE(churn.step(step < steps / 2)) << "step " << step;
+    }
+    EXPECT_EQ(churn.orders(), churn.model_orders());
+}
 
 TEST(ItchReplayTest, AppliesEachMessageTypeAndSkipsTheRest)
 {
@@ -240,6 +749,26 @@ TEST(ItchReplayTest, OutputDoesNotDependOnThreads)
     }
 }
 
+TEST(ItchReplayTest, KeepsReferenceNumbersPerLocate)
+{
+    // Three locates add order 1, whichever workers they go to
+    using itch::framed;
+    const std::string feed = framed(itch::add(1, 1, 1, 'B', 100, "AAA", 1000)) +
+                             framed(itch::add(2, 2, 1, 'S', 50, "BBB", 2000)) +
+                             framed(itch::add(3, 3, 1, 'B', 10, "CCC", 3000)) +
+                             framed(itch::executed(2, 4, 1, 20)) + framed(itch::remove(1, 5, 1)) +
+                             framed(itch::replace(3, 6, 1, 2, 15, 3005)) +
+                             framed(itch::add(1, 7, 1, 'S', 5, "AAA", 1010)) +
+                             framed(itch::add(3, 8, 2, 'B', 1, "CCC", 1));
+    for (std::size_t threads = 1; threads <= 4; ++threads) {
+        EXPECT_EQ(replay_error(feed, threads,
+                               "1,AAA,1000,100,,\n2,BBB,,,2000,50\n3,CCC,3000,10,,\n"
+                               "4,BBB,,,2000,30\n5,AAA,,,,\n6,CCC,3005,15,,\n7,AAA,,,1010,5\n"),
+                  "message 8: duplicate order '2'")
+            << "threads " << threads;
+    }
+}
+
 TEST(ItchReplayTest, ReplaysFeedLargerThanItsBuffers)
 {
     // Each add raises the best bid, so input and output both span several 1 MiB batches and
@@ -258,4 +787,4 @@ TEST(ItchReplayTest, ReplaysFeedLargerThanItsBuffers)
 
 } // namespace
 
-// NOLINTEND(readability-magic-numbers)
+// NOLINTEND(readability-magic-numbers,bugprone-easily-swappable-parameters)
