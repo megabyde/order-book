@@ -259,6 +259,8 @@ if(BUILD_TESTING)
     add_rejected_input_test(malformed "3: price is not an unsigned integer: '12a'")
     add_rejected_input_test(unknown_order "3: unknown order '7'")
     add_rejected_input_test(duplicate_order "3: duplicate order '1'")
+    add_rejected_input_test(two_char_type "3: unknown message type 'CD'")
+    add_rejected_input_test(empty_type "3: unknown message type ''")
 
     add_test(
         NAME AppTest.ReplaysSample
@@ -319,6 +321,19 @@ if(BUILD_TESTING)
                 -DWORK=${PROJECT_BINARY_DIR}/sample_itch -P
                 ${PROJECT_SOURCE_DIR}/tests/replay_itch.cmake
         )
+        # The encoder rejects what the replay rejects, rather than encoding a row as some other type
+        foreach(name two_char_type empty_type)
+            add_test(
+                NAME EncoderTest.Rejects_${name}
+                COMMAND
+                    ${CMAKE_COMMAND} -DAPP=${Python3_EXECUTABLE}
+                    -DOPTION=${PROJECT_SOURCE_DIR}/scripts/csv_to_itch.py
+                    -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/${name}.csv -DEXIT=1
+                    "-DPATTERN=error: line 3: unknown message type" -P
+                    ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+            )
+        endforeach()
+
         # Order IDs of 2^31 and above, shared by two tickers, and in the way of replacements
         add_test(
             NAME AppTest.ReplaysWideReferencesItch
