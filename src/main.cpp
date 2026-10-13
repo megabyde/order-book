@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 // NOLINTNEXTLINE(bugprone-exception-escape)
 int main(int argc, const char* argv[])
@@ -33,8 +34,13 @@ int main(int argc, const char* argv[])
     }
     const auto* const path = args.back();
 
+    // A file stream reads a few KiB at a time by default; the buffer must be set before open()
+    constexpr std::size_t buffer_size = std::size_t{1} << 20U;
+    std::vector<char> buffer(buffer_size);
+    std::ifstream input;
+    input.rdbuf()->pubsetbuf(buffer.data(), static_cast<std::streamsize>(buffer.size()));
     // ITCH is binary, and a text-mode stream would translate its bytes on some platforms
-    std::ifstream input(path, format == order_book::Format::Itch ? std::ios::binary : std::ios::in);
+    input.open(path, format == order_book::Format::Itch ? std::ios::binary : std::ios::in);
     if (!input) {
         std::cerr << "error: cannot open '" << path << "'\n";
         return 1;
