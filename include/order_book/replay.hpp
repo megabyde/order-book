@@ -1,10 +1,17 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <istream>
 #include <ostream>
 
 namespace order_book {
+
+/// Encoding of the feed that replay() reads
+enum class Format : std::uint8_t {
+    Csv,  ///< A header line, then one event per line in the format parse_line() reads
+    Itch, ///< Nasdaq TotalView-ITCH 5.0 messages, each after its 2-byte big-endian length
+};
 
 /// Replay an exchange feed and write the best bid and offer of a ticker whenever it changes
 ///
@@ -25,5 +32,14 @@ std::size_t replay(std::istream& in, std::ostream& out);
 /// reads the input and writes the output in line order, so the output and the exception do not
 /// depend on `threads`. A feed with fewer tickers than workers leaves the rest idle.
 std::size_t replay(std::istream& in, std::ostream& out, std::size_t threads);
+
+/// Replay a feed in `format` with `threads` worker threads, at least 1
+///
+/// Format::Csv is the overload above. Format::Itch reads the messages decode_itch() describes:
+/// workers keep the books of the stock locates assigned to them, `<TIME>` is in nanoseconds, the
+/// ticker is the stock symbol of the locate's first add, and errors name the message by its
+/// position in the feed, `message N: `, counting from 1. The count returned includes adds,
+/// executions, cancels, deletes, replaces, and trades, but not the message types the book skips.
+std::size_t replay(std::istream& in, std::ostream& out, Format format, std::size_t threads);
 
 } // namespace order_book

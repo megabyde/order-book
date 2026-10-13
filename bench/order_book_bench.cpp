@@ -16,6 +16,7 @@
 #include <streambuf>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -103,9 +104,9 @@ void BM_ExecuteFront(benchmark::State& state)
 }
 BENCHMARK(BM_ExecuteFront)->Range(64, 4096);
 
-// Replays the feed at `path` with range(0) worker threads through the entry point the application
-// uses
-void BM_Replay(benchmark::State& state, const std::string& path)
+// Replays the feed at `path` in `format` with range(0) worker threads through the entry point the
+// application uses
+void BM_Replay(benchmark::State& state, const std::string& path, order_book::Format format)
 {
     const auto threads = static_cast<std::size_t>(state.range(0));
     const std::ifstream file(path, std::ios::binary);
@@ -123,7 +124,7 @@ void BM_Replay(benchmark::State& state, const std::string& path)
     // An untimed first pass rejects a malformed feed and counts its events
     std::size_t events = 0;
     try {
-        events = order_book::replay(in, out, threads);
+        events = order_book::replay(in, out, format, threads);
     }
     catch (const std::invalid_argument& error) {
         state.SkipWithError(error.what());
@@ -132,7 +133,7 @@ void BM_Replay(benchmark::State& state, const std::string& path)
     for (const auto _ : state) {
         in.clear();
         in.seekg(0);
-        order_book::replay(in, out, threads);
+        order_book::replay(in, out, format, threads);
     }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(events));
     state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(feed.size()));
@@ -146,20 +147,35 @@ constexpr char list_separator = ';';
 constexpr char list_separator = ':';
 #endif
 
-// Registers BM_Replay/<path>/threads:N for each feed in ORDER_BOOK_REPLAY_CSV, a list separated
-// like PATH, so that one process and one --benchmark_out file cover every feed
+void register_feeds(std::string_view feeds, order_book::Format format);
+
+// Registers BM_Replay/<path>/threads:N for each CSV feed in ORDER_BOOK_REPLAY_CSV and each ITCH
+// feed in ORDER_BOOK_REPLAY_ITCH, lists separated like PATH, so that one process and one
+// --benchmark_out file cover every feed
 void register_replays()
 {
-    const char* const feeds = std::getenv("ORDER_BOOK_REPLAY_CSV");
-    if (feeds == nullptr) {
+    const char* const csv = std::getenv("ORDER_BOOK_REPLAY_CSV");
+    const char* const itch = std::getenv("ORDER_BOOK_REPLAY_ITCH");
+    if (csv == nullptr && itch == nullptr) {
         benchmark::RegisterBenchmark("BM_Replay", [](benchmark::State& state) {
-            state.SkipWithMessage("ORDER_BOOK_REPLAY_CSV is not set");
+            state.SkipWithMessage(
+                "neither ORDER_BOOK_REPLAY_CSV nor ORDER_BOOK_REPLAY_ITCH is set");
         });
         return;
     }
-    for (const auto feed : std::string_view(feeds) | std::views::split(list_separator)) {
+    for (const auto& [feeds, format] :
+         {std::pair{csv, order_book::Format::Csv}, std::pair{itch, order_book::Format::Itch}}) {
+        if (feeds != nullptr) {
+            register_feeds(feeds, format);
+        }
+    }
+}
+
+void register_feeds(std::string_view feeds, order_book::Format format)
+{
+    for (const auto feed : feeds | std::views::split(list_separator)) {
         const std::string path(feed.begin(), feed.end());
-        benchmark::RegisterBenchmark("BM_Replay/" + path, BM_Replay, path)
+        benchmark::RegisterBenchmark("BM_Replay/" + path, BM_Replay, path, format)
             ->ArgName("threads")
             ->RangeMultiplier(2)
             ->Range(1, max_replay_threads)

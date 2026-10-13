@@ -1,8 +1,8 @@
-# Run APP with an optional INPUT and fail unless it exits with EXIT and its stderr matches PATTERN.
-# RESULT_VARIABLE holds a description instead of a number when APP dies on a signal, so a crash
-# fails the exit check
+# Run APP with an optional OPTION and INPUT and fail unless it exits with EXIT and its stderr matches
+# PATTERN. RESULT_VARIABLE holds a description instead of a number when APP dies on a signal, so a
+# crash fails the exit check
 execute_process(
-    COMMAND ${APP} ${INPUT}
+    COMMAND ${APP} ${OPTION} ${INPUT}
     OUTPUT_QUIET
     ERROR_VARIABLE stderr
     RESULT_VARIABLE result

@@ -1,5 +1,6 @@
 # Generate a synthetic feed with scripts/gen_feed.py, take the expected output from the independent
-# model in scripts/reference_bbo.py, then compare APP against it.
+# model in scripts/reference_bbo.py, then compare APP against it. With FORMAT itch, APP replays the
+# feed encoded as ITCH instead.
 foreach(script gen_feed reference_bbo)
     set(${script} ${SOURCE_DIR}/scripts/${script}.py)
 endforeach()
@@ -23,4 +24,9 @@ if(NOT result EQUAL 0)
     message(FATAL_ERROR "reference_bbo.py exited with ${result}")
 endif()
 
-include(${CMAKE_CURRENT_LIST_DIR}/compare_output.cmake)
+if(FORMAT STREQUAL "itch")
+    set(CSV ${INPUT})
+    include(${CMAKE_CURRENT_LIST_DIR}/replay_itch.cmake)
+else()
+    include(${CMAKE_CURRENT_LIST_DIR}/compare_output.cmake)
+endif()

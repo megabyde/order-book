@@ -11,8 +11,9 @@
 ## Overview
 
 `order_book` replays one trading day of an equity exchange's event feed and prints the best bid and
-offer (BBO) of a ticker each time it changes. It keeps one book per ticker: each side is a sorted set
-of price levels, and each level holds the total quantity of its orders.
+offer (BBO) of a ticker each time it changes. It reads the CSV format below or Nasdaq TotalView-ITCH
+5.0. It keeps one book per ticker: each side is a sorted set of price levels, and each level holds
+the total quantity of its orders.
 
 ### Input
 
@@ -40,6 +41,25 @@ happened. `E` and `F` name the resting order that traded, and each counterparty'
 as their own messages, so the book never matches orders itself. Matching an `E` against the
 opposite side again would count every fill twice.
 
+### ITCH input
+
+`order_book --format=itch FILE` reads Nasdaq TotalView-ITCH 5.0 instead: the uncompressed binary
+file Nasdaq publishes, in which each message follows its 2-byte big-endian length. Decompress a
+`.gz` capture first. The default is `--format=csv`.
+
+| ITCH message   | Effect on the order it names                                            |
+| -------------- | ----------------------------------------------------------------------- |
+| `A`, `F`       | Add a buy or sell order                                                 |
+| `E`, `C`, `X`  | Take its shares off the order, clamped to what remains; removes it at 0 |
+| `D`            | Delete the order                                                        |
+| `U`            | Replace the order by one on the same side under a new reference number  |
+| `P`, `Q`       | A trade or cross trade; the book does not change                        |
+| Any other type | Skipped: system events, the stock directory, trading status, imbalances |
+
+Books are kept per stock locate. `<TIME>` is the message's timestamp in nanoseconds since midnight,
+and `<TICKER>` is the stock symbol of the locate's first add, without its padding. Prices keep the
+feed's unit, 1/10000 of a dollar, the same as the CSV format's 100ths of a penny.
+
 ### Output
 
 One line per BBO change, on stdout:
@@ -48,7 +68,8 @@ One line per BBO change, on stdout:
 <TIME>,<TICKER>,<BBP>,<BBQ>,<BAP>,<BAQ>
 ```
 
-`<TIME>` and `<TICKER>` come from the event that caused the change. `<BBP>` and `<BBQ>` are the price
+`<TIME>` and `<TICKER>` come from the event that caused the change; `<TIME>` is in milliseconds for
+CSV input and nanoseconds for ITCH. `<BBP>` and `<BBQ>` are the price
 and total quantity of the best bid level, empty if there are no bids, and `<BAP>` and `<BAQ>` are the
 same for the ask. An event that leaves the BBO as it was prints nothing: an add or delete below the
 best level, a trade, or a `C` that does not decrease the order.
@@ -59,16 +80,25 @@ The replay stops at the first line it cannot apply and prints `error: line N: <r
 with exit status 1; the lines before it have already been printed. A line fails on a malformed or
 out-of-range field, an unknown message type, an add that reuses a live order ID, or a `C`, `D`, `E`,
 or `F` that names no live order. A file that cannot be opened also exits with 1, and a wrong argument
-count prints the usage to stderr and exits with 2.
+count or an unknown `--format` prints the reason to stderr and exits with 2.
+
+ITCH errors name the message instead, `error: message N: <reason>`, counting messages from 1. A
+message fails on an unknown type, a size other than the specification's for a type the book uses, a
+side other than `B` or `S`, a truncated last message, an add or a replacement that reuses a live
+order reference, or an execution, cancel, delete, or replace that names no live order.
 
 ### Design
 
-The library in `include/order_book/` has three parts:
+The library in `include/order_book/` has four parts:
 
 - [`feed.hpp`](include/order_book/feed.hpp): `parse_line()` turns a line into a `Message` whose
   event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
   that knows the line format.
-- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book. Each side is a
+- [`itch.hpp`](include/order_book/itch.hpp): `decode_itch()` does the same for one ITCH message,
+  mapping it onto the same events plus a `ReplaceOrder` for `U`. It is the only code that knows the
+  ITCH layout.
+- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book, a template on how the
+  feed names orders: text IDs for CSV, 64-bit reference numbers for ITCH. Each side is a
   `std::map` from price to a level holding a running total and an order count, ordered best price
   first so that the best level is `begin()`. Orders live in a `std::vector` that reuses removed
   positions, and an open-addressing index from order ID to position finds any order in one hash
@@ -76,9 +106,10 @@ The library in `include/order_book/` has three parts:
   level.
 - [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
   feed, keeps a book per ticker, and writes a line whenever a BBO changes. Worker threads, one per
-  hardware thread by default, each keep the books of the tickers that hash to them, and the calling
-  thread merges their output back into input order, so the output does not depend on the thread
-  count. The application opens the file and calls it, and so does the replay benchmark.
+  hardware thread by default, each keep the books of the tickers that hash to them, or of the stock
+  locates assigned to them for ITCH, and the calling thread merges their output back into input
+  order, so the output does not depend on the thread count. The application opens the file and
+  calls it, and so does the replay benchmark.
 
 This repository uses:
 
