@@ -39,11 +39,14 @@ jobs:
       # GITHUB_ENV exposes the pins to every later step's ${{ env.* }}. The anchor
       # dedupes the step across this file's jobs (anchors are file-scoped, hence
       # still one step per job). shell: bash is a no-op on Linux/macOS and makes the
-      # alias valid in the Windows job, where the default is pwsh.
+      # alias valid in the Windows job, where the default is pwsh. RUNNER_IMAGE copies the
+      # runner's own variables, which ${{ env.* }} cannot read, for the Conan cache keys.
       - &load-ci-env
         name: Load CI env
         shell: bash
-        run: cat .github/ci.env >> "$GITHUB_ENV"
+        run: |
+          cat .github/ci.env >> "$GITHUB_ENV"
+          echo "RUNNER_IMAGE=$ImageOS-$ImageVersion" >> "$GITHUB_ENV"
       - name: Install GCC 14
         if: runner.os == 'Linux' && matrix.compiler == 'gcc'
         run: sudo apt-get update && sudo apt-get install -y gcc-14 g++-14
@@ -53,11 +56,14 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
+      # Conan packages follow from the key's inputs, so a run that hits the key has nothing to
+      # save. The runner image is in the key because an image update can change the compiler,
+      # and with it every package ID, without changing any keyed file.
       - uses: actions/cache@v6
         with:
           path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
+          key: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ env.RUNNER_IMAGE }}-
       # The Conan toolchain probes for mold only on Linux, so the macOS leg installs ccache alone.
       # Refresh apt metadata first because runner images can retain package lists whose versions no
       # longer exist
@@ -106,8 +112,8 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
+          key: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ env.RUNNER_IMAGE }}-
       - name: Install dependencies (release)
         run: conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
       - name: Build and test (release preset)
@@ -137,8 +143,8 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-coverage-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-coverage-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
+          key: conan-${{ env.CONAN_VERSION }}-coverage-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-coverage-${{ env.RUNNER_IMAGE }}-
       - uses: actions/cache@v6
         with:
           path: .ccache
@@ -168,8 +174,8 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-lint-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-${{ github.run_id }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-lint-${{ hashFiles('conan.lock', 'profiles/**', 'conan/**') }}-
+          key: conan-${{ env.CONAN_VERSION }}-lint-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-lint-${{ env.RUNNER_IMAGE }}-
       # ~/.local/bin precedes /usr/bin on the runner, so these shadow the image's
       # unpinned clang-format/clang-tidy.
       - name: Pin lint toolchain
