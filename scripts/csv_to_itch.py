@@ -3,10 +3,10 @@
 
 Usage: csv_to_itch.py FILE [-o OUT]
 
-FILE is a feed in the format reference_bbo.py reads, with numeric order IDs and tickers of at most
-8 characters. The output is length-prefixed ITCH 5.0 messages, so `order_book --format=itch OUT`
-prints the same lines as `order_book FILE`: the timestamp field carries the CSV time unchanged, and
-the stock field the ticker.
+FILE is a feed in the format reference_bbo.py reads, with numeric order IDs below 2**32 and tickers
+of at most 8 characters. The output is length-prefixed ITCH 5.0 messages, so
+`order_book --format=itch OUT` prints the same lines as `order_book FILE`: the timestamp field
+carries the CSV time unchanged, and the stock field the ticker.
 
 The encoding varies to cover every message type the replay decodes. Adds alternate between A and F,
 and executions between E and C. A decrease to a nonzero quantity alternates between X, which cancels
@@ -19,13 +19,13 @@ and close the feed; the replay skips both.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import struct
 import sys
 
 UINT48_MAX = 2**48 - 1
-UINT64_MAX = 2**64 - 1
-# Reference numbers for replacements, above any CSV order ID that gen_feed.py writes
-REPLACEMENT_BASE = 2**63
+# The replay rejects order reference numbers from 2**32 up
+MAX_ITCH_ORDER = 2**32
 
 
 class EncodeError(Exception):
@@ -33,13 +33,17 @@ class EncodeError(Exception):
 
 
 class Encoder:
-    def __init__(self) -> None:
+    def __init__(self, used: set[int]) -> None:
         self.out: list[bytes] = []
         self.locates: dict[str, int] = {}
-        # CSV order ID -> [reference number, remaining shares, price, ticker]
-        self.orders: dict[str, list] = {}
-        self.adds = self.executions = self.decreases = self.replacements = 0
+        # (ticker, CSV order ID) -> [reference number, remaining shares, price]
+        self.orders: dict[tuple[str, str], list] = {}
+        self.adds = self.executions = self.decreases = 0
         self.match = 0
+        # Replacements count down from the top of the range, skipping every order ID of the feed,
+        # so a replacement never takes a reference number a later add uses
+        self.used = used
+        self.replacement = MAX_ITCH_ORDER
 
     def message(self, body: bytes) -> None:
         self.out.append(struct.pack(">H", len(body)) + body)
@@ -63,6 +67,14 @@ class Encoder:
             )
             self.message(directory + b"NCZ PNN1N" + struct.pack(">I", 0) + b"N")
         return self.locates[ticker]
+
+    def next_replacement(self) -> int:
+        self.replacement -= 1
+        while self.replacement in self.used:
+            self.replacement -= 1
+        if self.replacement <= 0:
+            raise EncodeError("no reference number left for a replacement")
+        return self.replacement
 
     def next_match(self) -> int:
         self.match += 1
@@ -93,9 +105,9 @@ class Encoder:
 
         if kind in "BS":
             reference = int(order_id)
-            if order_id in self.orders or not 0 < reference <= UINT64_MAX:
-                raise EncodeError(f"order ID '{order_id}' is live or not a reference number")
-            self.orders[order_id] = [reference, shares, price, ticker]
+            if (ticker, order_id) in self.orders or not 0 < reference < MAX_ITCH_ORDER:
+                raise EncodeError(f"order ID '{order_id}' is live or not below {MAX_ITCH_ORDER}")
+            self.orders[ticker, order_id] = [reference, shares, price]
             body = struct.pack(">Q", reference) + kind.encode() + struct.pack(">I", shares)
             body += self.stock(ticker) + struct.pack(">I", price)
             if self.adds % 2 == 0:
@@ -104,14 +116,13 @@ class Encoder:
                 self.message(self.header("F", locate, time) + body + b"TEST")
             self.adds += 1
         elif kind in "CDEF":
-            order = self.orders.get(order_id)
+            order = self.orders.get((ticker, order_id))
             if order is None:
                 raise EncodeError(f"unknown order '{order_id}'")
             remaining = order[1]
             if kind == "C" and shares < remaining:
                 if shares > 0 and self.decreases % 2 == 1:
-                    self.replacements += 1
-                    replacement = REPLACEMENT_BASE + self.replacements
+                    replacement = self.next_replacement()
                     body = struct.pack(">QQII", order[0], replacement, shares, order[2])
                     self.message(self.header("U", locate, time) + body)
                     order[0], order[1] = replacement, shares
@@ -126,7 +137,7 @@ class Encoder:
             elif kind == "F":
                 self.execute(locate, time, order, remaining)
             if order[1] == 0:
-                del self.orders[order_id]
+                del self.orders[ticker, order_id]
         elif kind == "T":
             body = struct.pack(">Q", 0) + b"B" + struct.pack(">I", shares) + self.stock(ticker)
             body += struct.pack(">IQ", price, self.next_match())
@@ -139,8 +150,19 @@ class Encoder:
             raise EncodeError(f"unknown message type '{kind}'")
 
 
+def order_ids(lines: list[str]) -> set[int]:
+    """The numeric order IDs of every add in `lines`, ignoring what row() rejects anyway."""
+    ids = set()
+    for line in lines[1:]:
+        fields = line.split(",")
+        if len(fields) > 3 and fields[3] in ("B", "S"):
+            with contextlib.suppress(ValueError):
+                ids.add(int(fields[2]))
+    return ids
+
+
 def encode(lines: list[str]) -> bytes:
-    encoder = Encoder()
+    encoder = Encoder(order_ids(lines))
     encoder.message(Encoder.header("S", 0, 0) + b"O")
     last_time = 0
     for number, raw in enumerate(lines[1:], start=2):

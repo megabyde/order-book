@@ -9,7 +9,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <vector>
 
 #include <order_book/feed.hpp>
@@ -42,10 +41,10 @@ struct Bbo {
     friend bool operator==(const Bbo&, const Bbo&) = default;
 };
 
-/// Why a book rejected a message
+/// Why OrderBook::apply() rejected a message
 enum class BookError : std::uint8_t {
-    DuplicateOrder, ///< An add or a replacement reuses the ID of a live order
-    UnknownOrder,   ///< The message names no live order
+    DuplicateOrder, ///< An add reuses the ID of a live order
+    UnknownOrder,   ///< C/D/E/F names no live order
 };
 
 /**
@@ -54,37 +53,27 @@ enum class BookError : std::uint8_t {
  * The exchange has already matched the orders: each message applies to the resting order it
  * names, and the book never matches orders itself. Each price level keeps a running total and a
  * count of its orders, and every order is reachable from its ID in expected constant time.
- *
- * `Id` is how the feed names orders: std::string for the CSV feed's text IDs, std::uint64_t for
- * ITCH order reference numbers.
  */
-template <typename Id> class BasicOrderBook {
+class OrderBook {
 public:
-    /// How callers pass an order's ID: a view for string IDs, the number itself otherwise
-    using Key = std::conditional_t<std::is_same_v<Id, std::string>, std::string_view, Id>;
-
     /// An empty book
-    BasicOrderBook() = default;
+    OrderBook() = default;
     /// Not copyable: orders keep iterators into the levels, which a copy would leave pointing
     /// into the original. A container of books then moves them even where std::map's move
     /// constructor may throw, as on MSVC.
-    BasicOrderBook(const BasicOrderBook&) = delete;
+    OrderBook(const OrderBook&) = delete;
     /// Not copyable
-    BasicOrderBook& operator=(const BasicOrderBook&) = delete;
+    OrderBook& operator=(const OrderBook&) = delete;
     /// Takes `other`'s orders and levels, whose iterators stay valid
-    BasicOrderBook(BasicOrderBook&& other) = default;
+    OrderBook(OrderBook&& other) = default;
     /// Takes `other`'s orders and levels
-    BasicOrderBook& operator=(BasicOrderBook&& other) = default;
+    OrderBook& operator=(OrderBook&& other) = default;
     /// Frees the orders and levels
-    ~BasicOrderBook() = default;
+    ~OrderBook() = default;
 
     /// Apply `event` to the order with ID `order`, returning whether the best bid or offer
     /// changed; on error the book is unchanged
-    [[nodiscard]] std::expected<bool, BookError> apply(Key order, const Event& event);
-    /// Replace the order with ID `order` by `replacement`, resting on the same side at `price` with
-    /// `shares`, returning whether the best bid or offer changed; on error the book is unchanged
-    [[nodiscard]] std::expected<bool, BookError> replace(Key order, Key replacement, Price price,
-                                                         Quantity shares);
+    [[nodiscard]] std::expected<bool, BookError> apply(std::string_view order, const Event& event);
     /// Current best bid and offer
     [[nodiscard]] Bbo bbo() const;
     /// Number of resting orders on both sides
@@ -113,13 +102,13 @@ private:
     // std::map iterators survive inserts and erases of other levels
     using Levels = std::map<Price, PriceLevel, BestFirst>;
     struct Order {
-        Id id;
+        std::string id;
         Levels::iterator level;
         Quantity remaining;
         Side side;
     };
     // Open-addressing index entry: where the order sits in m_orders, and the low bits of its ID's
-    // hash, which place it in the table and skip most ID comparisons
+    // hash, which place it in the table and skip most string comparisons
     struct Slot {
         std::uint32_t order;
         std::uint32_t hash;
@@ -127,12 +116,9 @@ private:
     static constexpr std::uint32_t empty_slot = std::numeric_limits<std::uint32_t>::max();
     static constexpr std::size_t initial_slots = 16;
 
-    std::expected<bool, BookError> add(Key order, const AddOrder& add);
-    // Take `quantity` off the order in `slot`, removing it and then its level once they reach 0;
-    // returns whether the best bid or offer changed
-    bool reduce(std::size_t slot, Quantity quantity);
+    std::expected<bool, BookError> add(std::string_view order, const AddOrder& add);
     // Slot holding `id`, or the empty slot that ends its probe sequence
-    [[nodiscard]] std::size_t find(Key id, std::uint32_t hash) const;
+    [[nodiscard]] std::size_t find(std::string_view id, std::uint32_t hash) const;
     // Empty `slot`, shifting later entries of the probe run back so that no lookup stops early
     void erase(std::size_t slot);
     void grow();
@@ -146,13 +132,5 @@ private:
     std::vector<Slot> m_index =
         std::vector<Slot>(initial_slots, Slot{.order = empty_slot, .hash = 0});
 };
-
-/// Book of a feed that names orders by text, such as the CSV feed
-using OrderBook = BasicOrderBook<std::string>;
-/// Book of an ITCH feed, which names orders by 64-bit reference number
-using ItchOrderBook = BasicOrderBook<std::uint64_t>;
-
-extern template class BasicOrderBook<std::string>;
-extern template class BasicOrderBook<std::uint64_t>;
 
 } // namespace order_book

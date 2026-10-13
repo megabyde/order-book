@@ -84,26 +84,35 @@ count or an unknown `--format` prints the reason to stderr and exits with 2.
 
 ITCH errors name the message instead, `error: message N: <reason>`, counting messages from 1. A
 message fails on an unknown type, a size other than the specification's for a type the book uses, a
-side other than `B` or `S`, a truncated last message, an add or a replacement that reuses a live
-order reference, or an execution, cancel, delete, or replace that names no live order.
+side other than `B` or `S`, an order reference of 2^32 or above, a truncated last message, an add or
+a replacement that reuses a live order reference of its stock, or an execution, cancel, delete, or
+replace that names no live order of its stock.
 
 ### Design
 
-The library in `include/order_book/` has four parts:
+The library in `include/order_book/` has five parts:
 
 - [`feed.hpp`](include/order_book/feed.hpp): `parse_line()` turns a line into a `Message` whose
   event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
   that knows the line format.
-- [`itch.hpp`](include/order_book/itch.hpp): `decode_itch()` does the same for one ITCH message,
-  mapping it onto the same events plus a `ReplaceOrder` for `U`. It is the only code that knows the
-  ITCH layout.
-- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book, a template on how the
-  feed names orders: text IDs for CSV, 64-bit reference numbers for ITCH. Each side is a
-  `std::map` from price to a level holding a running total and an order count, ordered best price
-  first so that the best level is `begin()`. Orders live in a `std::vector` that reuses removed
+- [`itch.hpp`](include/order_book/itch.hpp): `visit_itch()` decodes one ITCH message and calls the
+  handler method for its kind, so the replay dispatches on the type byte once; `decode_itch()`
+  returns the same fields as an `ItchMessage`. It is the only code that knows the ITCH layout.
+- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed. Each
+  side is a `std::map` from price to a level holding a running total and an order count, ordered
+  best price first so that the best level is `begin()`. Orders live in a `std::vector` that reuses removed
   positions, and an open-addressing index from order ID to position finds any order in one hash
   lookup. An event costs that lookup, plus a level lookup for an add, whatever the depth of the
   level.
+- [`itch_market.hpp`](include/order_book/itch_market.hpp): the books of every stock locate for ITCH.
+  ITCH reference numbers are unique for the day and assigned in sequence, so orders live in small
+  pages of consecutive reference numbers, found through a two-level directory that holds only the
+  ranges in use, and the recent orders most messages name share a few pages. Each order is 8 bytes:
+  its remaining shares and the handle of its level, a pooled record that also names the book and
+  side. Each side is a vector of prices and handles, worst first, so the best level is the last one
+  and most adds and removals touch only its end. Each book keeps its own reference numbers, as a CSV
+  book keeps its order IDs, so an order whose reference number another locate's live order holds
+  goes to a hash map keyed by both.
 - [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
   feed, keeps a book per ticker, and writes a line whenever a BBO changes. Worker threads, one per
   hardware thread by default, each keep the books of the tickers that hash to them, or of the stock

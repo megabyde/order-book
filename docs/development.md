@@ -56,8 +56,9 @@ Tests are controlled by CMake's built-in `BUILD_TESTING` option from `include(CT
 leaves it at the default `ON`, so `make debug`, `make release`, `make sanitize*`, and
 `make coverage` all run the suite. It has four layers:
 
-- Unit tests in `tests/*_test.cpp` cover the CSV parser, the ITCH decoder, the book, and `replay()`
-  in both formats. [`tests/itch_messages.hpp`](../tests/itch_messages.hpp) builds ITCH messages
+- Unit tests in `tests/*_test.cpp` cover the CSV parser, the ITCH decoder, the CSV book, the ITCH
+  market, and `replay()` in both formats. Each book is also checked against a `std::map` model
+  under randomized churn. [`tests/itch_messages.hpp`](../tests/itch_messages.hpp) builds ITCH messages
   field by field for them.
 - `AppTest.*` runs the application on each error path through
   [`tests/expect_error.cmake`](../tests/expect_error.cmake), which checks the exit status and the

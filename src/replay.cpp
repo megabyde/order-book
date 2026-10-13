@@ -1,5 +1,6 @@
 #include <order_book/feed.hpp>
 #include <order_book/itch.hpp>
+#include <order_book/itch_market.hpp>
 #include <order_book/order_book.hpp>
 #include <order_book/replay.hpp>
 
@@ -29,7 +30,6 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace order_book {
@@ -332,63 +332,83 @@ public:
     }
 
 private:
-    struct Stock {
-        std::string ticker;
-        ItchOrderBook book;
+    // Applies one decoded message, recording its output or its failure; false after a failure
+    class Handler {
+    public:
+        Handler(ItchWorker& worker, std::size_t number, Output& output)
+            : m_worker(worker), m_number(number), m_output(output)
+        {
+        }
+
+        bool add(const ItchMessage& message)
+        {
+            auto& tickers = m_worker.m_tickers;
+            if (message.locate >= tickers.size()) {
+                tickers.resize(message.locate + std::size_t{1});
+            }
+            if (auto& ticker = tickers[message.locate]; ticker.empty()) {
+                ticker = message.stock.substr(0, message.stock.find_last_not_of(' ') + 1);
+            }
+            return applied(message, m_worker.m_market.add(message), message.order);
+        }
+        bool execute(const ItchMessage& message)
+        {
+            return applied(message, m_worker.m_market.execute(message), message.order);
+        }
+        bool remove(const ItchMessage& message)
+        {
+            return applied(message, m_worker.m_market.remove(message), message.order);
+        }
+        bool replace(const ItchMessage& message)
+        {
+            const auto result = m_worker.m_market.replace(message);
+            // A replacement fails as a duplicate under its new reference number
+            const auto duplicate = !result && result.error() == BookError::DuplicateOrder;
+            return applied(message, result, duplicate ? message.replacement : message.order);
+        }
+        bool trade(const ItchMessage& /*message*/)
+        {
+            ++m_output.events;
+            return true;
+        }
+        static bool skipped() { return true; }
+        bool error(const ItchError& error)
+        {
+            auto what = describe(error);
+            m_output.failure.emplace(m_number, std::move(what));
+            return false;
+        }
+
+    private:
+        bool applied(const ItchMessage& message, const std::expected<bool, BookError>& result,
+                     std::uint64_t order)
+        {
+            if (!result) {
+                m_output.failure.emplace(m_number, describe(result.error(), std::to_string(order)));
+                return false;
+            }
+            if (*result) {
+                append_line(m_output.text, message.time, m_worker.m_tickers[message.locate],
+                            m_worker.m_market.bbo(message.locate));
+                m_output.lines.emplace_back(m_number, m_output.text.size());
+            }
+            ++m_output.events;
+            return true;
+        }
+
+        ItchWorker& m_worker;
+        std::size_t m_number;
+        Output& m_output;
     };
 
     bool apply(std::string_view bytes, std::size_t number, Output& output)
     {
-        const auto message = decode_itch(bytes);
-        if (!message) {
-            output.failure.emplace(number, message.error());
-            return false;
-        }
-        if (std::holds_alternative<Skipped>(message->event)) {
-            return true;
-        }
-        if (message->locate >= m_stocks.size()) {
-            m_stocks.resize(message->locate + std::size_t{1});
-        }
-        auto& stock = m_stocks[message->locate];
-
-        std::expected<bool, BookError> applied = false;
-        if (const auto* const add = std::get_if<AddOrder>(&message->event)) {
-            if (stock.ticker.empty()) {
-                stock.ticker = message->stock;
-            }
-            applied = stock.book.apply(message->order, *add);
-        }
-        else if (const auto* const replace = std::get_if<ReplaceOrder>(&message->event)) {
-            applied =
-                stock.book.replace(message->order, replace->order, replace->price, replace->shares);
-            if (!applied && applied.error() == BookError::DuplicateOrder) {
-                output.failure.emplace(number,
-                                       describe(applied.error(), std::to_string(replace->order)));
-                return false;
-            }
-        }
-        else if (const auto* const execute = std::get_if<ExecuteOrder>(&message->event)) {
-            applied = stock.book.apply(message->order, *execute);
-        }
-        else if (std::holds_alternative<DeleteOrder>(message->event)) {
-            applied = stock.book.apply(message->order, DeleteOrder{});
-        }
-        if (!applied) {
-            output.failure.emplace(number,
-                                   describe(applied.error(), std::to_string(message->order)));
-            return false;
-        }
-        if (*applied) {
-            append_line(output.text, message->time, stock.ticker, stock.book.bbo());
-            output.lines.emplace_back(number, output.text.size());
-        }
-        ++output.events;
-        return true;
+        return visit_itch(bytes, Handler(*this, number, output));
     }
 
-    // Indexed by stock locate
-    std::vector<Stock> m_stocks;
+    ItchMarket m_market;
+    // Stock symbol of each locate's first add
+    std::vector<std::string> m_tickers;
 };
 
 // Runs the workers over a queue of batches, which every worker processes in order

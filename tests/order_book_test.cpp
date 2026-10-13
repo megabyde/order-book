@@ -6,14 +6,15 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
 #include <map>
 #include <optional>
 #include <ostream>
 #include <random>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using order_book::AddOrder;
@@ -107,6 +108,26 @@ TEST_F(OrderBookTest, CountsOrdersAndLevels)
     sell("3", 1120, 150);
     EXPECT_EQ(book.order_count(), 3U);
     EXPECT_EQ(book.level_count(), 2U);
+}
+
+// Orders keep iterators into their book's levels, which a copy would share with the original
+static_assert(!std::is_copy_constructible_v<OrderBook> && !std::is_copy_assignable_v<OrderBook>);
+static_assert(std::is_move_constructible_v<OrderBook> && std::is_move_assignable_v<OrderBook>);
+
+TEST_F(OrderBookTest, KeepsWorkingAfterAMove)
+{
+    buy("1", 1110, 150);
+    sell("2", 1120, 100);
+    auto moved = std::move(book);
+    EXPECT_EQ(moved.apply("1", ExecuteOrder{.shares = 50}), true);
+    EXPECT_EQ(moved.apply("2", DeleteOrder{}), true);
+    EXPECT_EQ(moved.bbo(), bbo(Level{.price = 1110, .quantity = 100}, {}));
+
+    OrderBook assigned;
+    assigned = std::move(moved);
+    EXPECT_EQ(assigned.apply("1", DeleteOrder{}), true);
+    EXPECT_EQ(assigned.bbo(), bbo({}, {}));
+    EXPECT_EQ(assigned.order_count(), 0U);
 }
 
 TEST_F(OrderBookTest, BestBidIsHighestLevelTotal)
@@ -413,46 +434,6 @@ TEST_F(OrderBookTest, ReportsWhetherBboChanged)
     EXPECT_TRUE(apply("1", FillOrder{}));
     EXPECT_TRUE(apply("3", FillOrder{}));
     EXPECT_EQ(book.bbo(), bbo({}, Level{1100, 10}));
-}
-
-// The ITCH book keys orders by reference number; replace() is how it applies U
-TEST(ItchOrderBookTest, ReplaceKeepsTheSideAndMovesTheOrder)
-{
-    order_book::ItchOrderBook book;
-    ASSERT_TRUE(book.apply(1, AddOrder{.side = Side::Buy, .price = 1000, .shares = 100}));
-    ASSERT_TRUE(book.apply(2, AddOrder{.side = Side::Sell, .price = 1010, .shares = 50}));
-
-    // A new best bid: the replacement rests on the buy side at its own price and size
-    EXPECT_EQ(book.replace(1, 3, 1005, 70), true);
-    EXPECT_EQ(book.bbo(), bbo(Level{1005, 70}, Level{1010, 50}));
-    EXPECT_EQ(book.order_count(), 2U);
-    EXPECT_EQ(book.apply(1, DeleteOrder{}), std::unexpected(BookError::UnknownOrder));
-
-    // Replacing an order by the same reference number is a replacement like any other
-    EXPECT_EQ(book.replace(3, 3, 1005, 60), true);
-    EXPECT_EQ(book.bbo(), bbo(Level{1005, 60}, Level{1010, 50}));
-}
-
-TEST(ItchOrderBookTest, ReplaceBelowTheBestLeavesTheBboAlone)
-{
-    order_book::ItchOrderBook book;
-    ASSERT_TRUE(book.apply(1, AddOrder{.side = Side::Buy, .price = 1000, .shares = 100}));
-    ASSERT_TRUE(book.apply(2, AddOrder{.side = Side::Buy, .price = 990, .shares = 10}));
-    EXPECT_EQ(book.replace(2, 4, 980, 20), false);
-    EXPECT_EQ(book.bbo(), bbo(Level{1000, 100}, {}));
-    EXPECT_EQ(book.level_count(), 2U);
-}
-
-TEST(ItchOrderBookTest, ReplaceRejectsUnknownOrderOrLiveReplacement)
-{
-    order_book::ItchOrderBook book;
-    ASSERT_TRUE(book.apply(1, AddOrder{.side = Side::Buy, .price = 1000, .shares = 100}));
-    ASSERT_TRUE(book.apply(2, AddOrder{.side = Side::Buy, .price = 990, .shares = 10}));
-
-    EXPECT_EQ(book.replace(9, 3, 1005, 70), std::unexpected(BookError::UnknownOrder));
-    EXPECT_EQ(book.replace(1, 2, 1005, 70), std::unexpected(BookError::DuplicateOrder));
-    EXPECT_EQ(book.bbo(), bbo(Level{1000, 100}, {}));
-    EXPECT_EQ(book.order_count(), 2U);
 }
 
 // NOLINTEND(readability-magic-numbers)
