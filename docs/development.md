@@ -116,6 +116,18 @@ CSV ones:
 ORDER_BOOK_REPLAY_ITCH=/path/to/12302019.NASDAQ_ITCH50 make bench
 ```
 
+Each ITCH file also gets `BM_ItchEngine/<path>`, which decodes every message and applies it to one
+`ItchMarket` on one thread, from memory and without output, with the same prefetching as the
+replay's workers. That is the region other ITCH books time in their own benchmarks, so its
+`per_message` counter is the per-core figure to compare with them. Each iteration starts from an
+empty market, and a full day takes about 15 seconds, so give it a few repetitions rather than the
+default 10:
+
+```bash
+ORDER_BOOK_REPLAY_ITCH=/path/to/12302019.NASDAQ_ITCH50 \
+  make bench BENCH_ARGS='--benchmark_filter=BM_ItchEngine --benchmark_repetitions=3'
+```
+
 `BENCH_ARGS` replaces the default Google Benchmark flags, 10 repetitions reporting aggregates only.
 For example, `make bench BENCH_ARGS=--benchmark_filter=BM_Replay` runs the replays alone.
 

@@ -1,4 +1,6 @@
 #include <order_book/feed.hpp>
+#include <order_book/itch.hpp>
+#include <order_book/itch_market.hpp>
 #include <order_book/order_book.hpp>
 #include <order_book/replay.hpp>
 
@@ -7,8 +9,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <ios>
+#include <limits>
+#include <memory>
+#include <optional>
 #include <ostream>
 #include <ranges>
 #include <sstream>
@@ -104,21 +110,30 @@ void BM_ExecuteFront(benchmark::State& state)
 }
 BENCHMARK(BM_ExecuteFront)->Range(64, 4096);
 
+// The whole file at `path`, or nothing after skipping `state` with the reason
+std::optional<std::string> read_feed(benchmark::State& state, const std::string& path)
+{
+    const std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        state.SkipWithError("cannot open '" + path + "'");
+        return std::nullopt;
+    }
+    std::stringstream contents;
+    contents << file.rdbuf();
+    return std::move(contents).str();
+}
+
 // Replays the feed at `path` in `format` with range(0) worker threads through the entry point the
 // application uses
 void BM_Replay(benchmark::State& state, const std::string& path, order_book::Format format)
 {
     const auto threads = static_cast<std::size_t>(state.range(0));
-    const std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        state.SkipWithError("cannot open '" + path + "'");
+    const auto feed = read_feed(state, path);
+    if (!feed) {
         return;
     }
-    std::stringstream contents;
-    contents << file.rdbuf();
-    const std::string feed = contents.str();
 
-    std::istringstream in(feed);
+    std::istringstream in(*feed);
     NullBuffer sink;
     std::ostream out(&sink);
     // An untimed first pass rejects a malformed feed and counts its events
@@ -136,7 +151,97 @@ void BM_Replay(benchmark::State& state, const std::string& path, order_book::For
         order_book::replay(in, out, format, threads);
     }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(events));
-    state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(feed.size()));
+    state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(feed->size()));
+}
+
+// Offset of the ITCH message after the one whose 2-byte length is at `offset` in `feed`
+std::size_t next_message(std::string_view feed, std::size_t offset)
+{
+    constexpr unsigned byte_bits = std::numeric_limits<unsigned char>::digits;
+    const std::size_t high = static_cast<unsigned char>(feed[offset]);
+    const std::size_t low = static_cast<unsigned char>(feed[offset + 1]);
+    return offset + 2 + ((high << byte_bits) | low);
+}
+
+std::string_view message_at(std::string_view feed, std::size_t offset)
+{
+    return feed.substr(offset + 2, next_message(feed, offset) - offset - 2);
+}
+
+// Decode and apply every message of `feed` to `market` on this thread, starting the loads of later
+// messages as replay()'s workers do. Returns why the first message that fails does, if one does.
+std::optional<std::string> apply_itch(std::string_view feed, order_book::ItchMarket& market)
+{
+    constexpr auto distance = order_book::ItchMarket::prefetch_distance;
+    std::size_t ahead = 0;
+    std::size_t half = 0;
+    for (std::size_t skipped = 0; skipped < distance && ahead < feed.size(); ++skipped) {
+        ahead = next_message(feed, ahead);
+        half = skipped < distance / 2 ? next_message(feed, half) : half;
+    }
+    std::size_t number = 1;
+    for (std::size_t offset = 0; offset < feed.size(); offset = next_message(feed, offset)) {
+        if (ahead < feed.size()) {
+            const auto peeked = order_book::peek_itch(message_at(feed, ahead));
+            market.prefetch(peeked.order, peeked.locate);
+            ahead = next_message(feed, ahead);
+        }
+        if (half < feed.size()) {
+            const auto peeked = order_book::peek_itch(message_at(feed, half));
+            market.prefetch_levels(peeked.order, peeked.locate);
+            half = next_message(feed, half);
+        }
+        const auto message = order_book::decode_itch(message_at(feed, offset));
+        if (!message) {
+            return std::format("message {}: {}", number, describe(message.error()));
+        }
+        const auto applied = market.apply(*message);
+        if (!applied) {
+            const auto duplicate = applied.error() == order_book::BookError::DuplicateOrder;
+            return std::format("message {}: {} order", number, duplicate ? "duplicate" : "unknown");
+        }
+        auto changed = *applied;
+        benchmark::DoNotOptimize(changed);
+        ++number;
+    }
+    return std::nullopt;
+}
+
+// Decodes and applies the ITCH feed at `path` to one ItchMarket on one thread, from memory and
+// without output: the region that per-core comparisons with other ITCH books time. Each iteration
+// starts from an empty market, made and destroyed outside the timing.
+void BM_ItchEngine(benchmark::State& state, const std::string& path)
+{
+    const auto feed = read_feed(state, path);
+    if (!feed) {
+        return;
+    }
+    // An untimed first pass rejects a truncated or malformed feed and counts its messages
+    std::size_t messages = 0;
+    for (std::size_t offset = 0; offset < feed->size(); offset = next_message(*feed, offset)) {
+        if (offset + 2 > feed->size() || next_message(*feed, offset) > feed->size()) {
+            state.SkipWithError(std::format("message {}: truncated", messages + 1));
+            return;
+        }
+        ++messages;
+    }
+    if (const auto error = apply_itch(*feed, *std::make_unique<order_book::ItchMarket>())) {
+        state.SkipWithError(*error);
+        return;
+    }
+    for (const auto _ : state) {
+        state.PauseTiming();
+        auto market = std::make_unique<order_book::ItchMarket>();
+        state.ResumeTiming();
+        benchmark::DoNotOptimize(apply_itch(*feed, *market));
+        state.PauseTiming();
+        market.reset();
+        state.ResumeTiming();
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(messages));
+    state.counters["per_message"] = benchmark::Counter(
+        static_cast<double>(messages),
+        benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
 }
 
 constexpr int max_replay_threads = 8;
@@ -150,8 +255,8 @@ constexpr char list_separator = ':';
 void register_feeds(std::string_view feeds, order_book::Format format);
 
 // Registers BM_Replay/<path>/threads:N for each CSV feed in ORDER_BOOK_REPLAY_CSV and each ITCH
-// feed in ORDER_BOOK_REPLAY_ITCH, lists separated like PATH, so that one process and one
-// --benchmark_out file cover every feed
+// feed in ORDER_BOOK_REPLAY_ITCH, lists separated like PATH, and BM_ItchEngine/<path> for each ITCH
+// feed, so that one process and one --benchmark_out file cover every feed
 void register_replays()
 {
     const char* const csv = std::getenv("ORDER_BOOK_REPLAY_CSV");
@@ -181,6 +286,10 @@ void register_feeds(std::string_view feeds, order_book::Format format)
             ->Range(1, max_replay_threads)
             ->UseRealTime()
             ->Unit(benchmark::kMillisecond);
+        if (format == order_book::Format::Itch) {
+            benchmark::RegisterBenchmark("BM_ItchEngine/" + path, BM_ItchEngine, path)
+                ->Unit(benchmark::kMillisecond);
+        }
     }
 }
 

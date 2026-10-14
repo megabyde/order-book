@@ -45,6 +45,11 @@ public:
     [[nodiscard]] std::expected<bool, BookError> remove(const ItchMessage& message);
     /// apply() for a Replace
     [[nodiscard]] std::expected<bool, BookError> replace(const ItchMessage& message);
+    /// Messages ahead of the one being applied for which to call prefetch(), and half as many for
+    /// prefetch_levels(), so that the loads finish first: a message takes over 50 ns on one core
+    /// and a miss to memory roughly 100 ns. On the real day, distances from 8 to 64 ran within 4%
+    /// of each other.
+    static constexpr std::size_t prefetch_distance = 16;
     /// Start loading the index entry of `order` and the book of `locate`, so that a message naming
     /// them a few messages later does not wait for memory
     void prefetch(std::uint64_t order, std::uint16_t locate) const;
