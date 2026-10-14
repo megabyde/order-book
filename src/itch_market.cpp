@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -29,6 +30,17 @@ constexpr unsigned locate_bits = std::numeric_limits<std::uint16_t>::digits;
 std::uint64_t overflow_key(std::uint64_t order, std::uint16_t locate)
 {
     return (order << locate_bits) | locate;
+}
+
+// Ask for the cache line holding `address`. A prefetch is a hint: it cannot fault and does not
+// change what the program computes, so a line that turns out not to be needed costs only the fill.
+void prefetch_line(const void* address)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(address);
+#else
+    static_cast<void>(address);
+#endif
 }
 
 } // namespace
@@ -240,6 +252,47 @@ ItchMarket::Order* ItchMarket::find(std::uint64_t order, std::uint16_t locate)
     }
     const auto found = m_overflow.find(overflow_key(order, locate));
     return found == m_overflow.end() ? nullptr : &found->second;
+}
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void ItchMarket::prefetch(std::uint64_t order, std::uint16_t locate) const
+{
+    if (const auto* const resting = indexed(order)) {
+        prefetch_line(resting);
+    }
+    if (locate < m_books.size()) {
+        prefetch_line(&m_books[locate]);
+    }
+}
+
+// The best entries are read here rather than prefetched, since prefetch() could only fetch the
+// book, whose vectors point to them. That read may miss, but only these prefetches wait for it.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+void ItchMarket::prefetch_levels(std::uint64_t order, std::uint16_t locate) const
+{
+    if (const auto* const resting = indexed(order); resting != nullptr && resting->level != 0) {
+        prefetch_line(&m_levels[resting->level]);
+    }
+    if (locate < m_books.size()) {
+        for (const auto* const levels : {&m_books[locate].bids, &m_books[locate].asks}) {
+            if (!levels->empty()) {
+                prefetch_line(&m_levels[levels->back().level]);
+            }
+        }
+    }
+}
+
+// The lookup reads the directory's chunk and page pointers itself. They are in cache for the
+// recent reference numbers that most messages name, and for an older order only the prefetch
+// waits on them.
+const ItchMarket::Order* ItchMarket::indexed(std::uint64_t order) const
+{
+    const auto chunk = order >> (page_bits + chunk_bits);
+    if (chunk >= m_chunks.size() || !m_chunks[chunk]) {
+        return nullptr;
+    }
+    const auto& page = (*m_chunks[chunk])[(order >> page_bits) & (chunk_size - 1)];
+    return page ? &page->orders[order & (page_size - 1)] : nullptr;
 }
 
 std::unique_ptr<ItchMarket::Page>& ItchMarket::page(std::uint64_t order)

@@ -189,6 +189,26 @@ TEST(ItchTest, AcceptsTheLastReferenceInRange)
     EXPECT_EQ(message->order, first_out_of_range - 1);
 }
 
+TEST(ItchTest, PeeksTheLocateAndOrderReference)
+{
+    using order_book::ItchPeek;
+    using order_book::peek_itch;
+    EXPECT_EQ(peek_itch(itch::add(1, 2, 42, 'B', 300, "AAPL", 100)),
+              (ItchPeek{.order = 42, .locate = 1}));
+    EXPECT_EQ(peek_itch(itch::replace(0xbeef, 2, 7, 8, 100, 10)),
+              (ItchPeek{.order = 7, .locate = 0xbeef}));
+    EXPECT_EQ(peek_itch(itch::remove(3, 2, first_out_of_range - 1)),
+              (ItchPeek{.order = first_out_of_range - 1, .locate = 3}));
+
+    // Too short to hold a reference, cut off inside it, or of a type the book does not use
+    EXPECT_EQ(peek_itch(""), ItchPeek{});
+    EXPECT_EQ(peek_itch(itch::system_event(2, 'O')), ItchPeek{});
+    EXPECT_EQ(peek_itch(itch::remove(1, 2, 42).substr(0, 18)), ItchPeek{});
+    auto directory = itch::remove(1, 2, 42);
+    directory.front() = 'R';
+    EXPECT_EQ(peek_itch(directory), ItchPeek{});
+}
+
 ItchMessage add_message(std::uint16_t locate, std::uint64_t order, Side side, Price price,
                         Quantity shares)
 {
