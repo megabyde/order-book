@@ -363,10 +363,18 @@ if(BUILD_BENCHMARKS)
     # the suite. make bench takes the measurements.
     if(BUILD_TESTING)
         add_test(NAME Bench.Smoke COMMAND order_book_bench --benchmark_min_time=1x)
-        set_tests_properties(
-            Bench.Smoke
-            PROPERTIES ENVIRONMENT
-                       ORDER_BOOK_REPLAY_CSV=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
-        )
+        set(BENCH_ENVIRONMENT ORDER_BOOK_REPLAY_CSV=${PROJECT_SOURCE_DIR}/tests/data/sample.csv)
+        # The ITCH benchmarks replay the sample feed as csv_to_itch.py encodes it
+        if(Python3_Interpreter_FOUND)
+            set(BENCH_ITCH ${CMAKE_CURRENT_BINARY_DIR}/bench_sample.itch)
+            add_test(NAME Bench.EncodeSample
+                     COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/csv_to_itch.py
+                             ${PROJECT_SOURCE_DIR}/tests/data/sample.csv -o ${BENCH_ITCH}
+            )
+            set_tests_properties(Bench.EncodeSample PROPERTIES FIXTURES_SETUP bench_itch)
+            set_tests_properties(Bench.Smoke PROPERTIES FIXTURES_REQUIRED bench_itch)
+            list(APPEND BENCH_ENVIRONMENT ORDER_BOOK_REPLAY_ITCH=${BENCH_ITCH})
+        endif()
+        set_tests_properties(Bench.Smoke PROPERTIES ENVIRONMENT "${BENCH_ENVIRONMENT}")
     endif()
 endif()
