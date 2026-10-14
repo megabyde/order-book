@@ -136,7 +136,7 @@ std::size_t message_length(const char* prefix)
 
 constexpr std::size_t length_size = 2;
 
-// Finds where the last whole length-prefixed message of a batch ends
+// Finds where the last whole length-prefixed message of a batch ends, keeping where each starts
 class MessageFraming {
 public:
     // Offset just past the last whole message in `text`; npos if none
@@ -147,13 +147,20 @@ public:
             if (next > text.size()) {
                 break;
             }
+            // A batch is a few MiB, so its offsets fit 32 bits
+            m_starts.push_back(static_cast<std::uint32_t>(m_end));
             m_end = next;
         }
         return m_end == 0 ? std::string_view::npos : m_end;
     }
+    // Offset just past the last whole message scanned, 0 if none
+    [[nodiscard]] std::size_t end() const { return m_end; }
+    // Offset of each whole message's length
+    [[nodiscard]] std::vector<std::uint32_t>& starts() { return m_starts; }
 
 private:
     std::size_t m_end = 0;
+    std::vector<std::uint32_t> m_starts;
 };
 
 // Cuts a stream into batches of whole records, lines or messages as Framing finds them
@@ -162,11 +169,11 @@ public:
     explicit BatchReader(std::istream& in) : m_source(in.rdbuf()), m_done(!in) {}
 
     // Replace `text` with at least batch_size bytes of whole records, fewer at the end of the
-    // stream, where the last record may be incomplete. Empty once the stream is exhausted.
-    void next(std::string& text)
+    // stream, where the last record may be incomplete, as a fresh `framing` finds them. Empty once
+    // the stream is exhausted.
+    void next(std::string& text, Framing& framing)
     {
         text = std::exchange(m_carry, {});
-        Framing framing;
         auto end = std::string::npos;
         while (!m_done) {
             const auto size = text.size();
@@ -205,7 +212,7 @@ struct Output {
     std::exception_ptr exception;
 };
 
-// A record of a batch, a line or a message without its length, with its number in the feed
+// A line of a batch with its number in the feed
 struct Line {
     std::size_t number;
     std::string_view text;
@@ -213,8 +220,14 @@ struct Line {
 
 struct Batch {
     std::string text;
-    // Each worker's records, in feed order, viewing text
+    // CSV: each worker's lines, in feed order, viewing text
     std::vector<std::vector<Line>> lines;
+    // Number of the first record and how many there are, the failing one included
+    std::size_t first = 0;
+    std::size_t records = 0;
+    // ITCH: where each whole message's length is in text, which every worker reads to find the
+    // messages of its locates
+    std::vector<std::uint32_t> starts;
     std::vector<Output> outputs;
     // A record the batch could not be split into, with its number; no record after it is assigned
     std::optional<std::pair<std::size_t, std::string>> failure;
@@ -224,9 +237,10 @@ struct Batch {
 
 // Split the batch into lines numbered from `number`, skipping the header and blank lines, and give
 // each line to the worker its ticker hashes to. Returns the number of the next batch's first line.
-std::size_t assign_lines(Batch& batch, std::size_t number)
+std::size_t assign_lines(Batch& batch, std::size_t number, LineFraming&& /*framing*/)
 {
-    const auto workers = batch.lines.size();
+    const auto workers = batch.outputs.size();
+    batch.lines.resize(workers);
     std::string_view rest = batch.text;
     while (!rest.empty()) {
         const auto newline = rest.find('\n');
@@ -250,33 +264,22 @@ std::size_t assign_lines(Batch& batch, std::size_t number)
     return number;
 }
 
-// Split the batch into messages numbered from `number`, and give each to the worker its stock
-// locate selects. Returns the number of the next batch's first message.
-std::size_t assign_messages(Batch& batch, std::size_t number)
+// Number the batch's messages from `number`, as `framing` found them, and record a truncated last
+// message as the batch's failure. Returns the number of the next batch's first message.
+std::size_t assign_messages(Batch& batch, std::size_t number, MessageFraming&& framing)
 {
-    const auto workers = batch.lines.size();
-    const std::string_view text = batch.text;
-    std::size_t offset = 0;
-    while (offset < text.size()) {
-        const auto current = number++;
-        if (offset + length_size > text.size()) {
-            batch.failure.emplace(current, "truncated message length");
-            return number;
-        }
-        const auto length = message_length(text.data() + offset);
-        const auto body = text.substr(offset + length_size, length);
-        if (body.size() < length) {
-            batch.failure.emplace(
-                current, std::format("truncated message: {} of {} bytes", body.size(), length));
-            return number;
-        }
-        offset += length_size + length;
-        // Messages too short to name a locate go to worker 0, which reports them
-        std::size_t worker = 0;
-        if (workers > 1 && body.size() > length_size) {
-            worker = message_length(body.data() + 1) % workers;
-        }
-        batch.lines[worker].push_back(Line{.number = current, .text = body});
+    batch.starts = std::move(framing.starts());
+    number += batch.starts.size();
+    const auto rest = std::string_view(batch.text).substr(framing.end());
+    if (rest.size() >= length_size) {
+        const auto length = message_length(batch.text.data() + framing.end());
+        batch.failure.emplace(number, std::format("truncated message: {} of {} bytes",
+                                                  rest.size() - length_size, length));
+        return number + 1;
+    }
+    if (!rest.empty()) {
+        batch.failure.emplace(number, "truncated message length");
+        return number + 1;
     }
     return number;
 }
@@ -284,11 +287,13 @@ std::size_t assign_messages(Batch& batch, std::size_t number)
 // Keeps the books of the tickers whose lines it is given
 class CsvWorker {
 public:
-    // Apply the lines in order. False after a failure, which leaves the books unusable.
-    bool process(const std::vector<Line>& lines, Output& output)
+    // Apply worker `index`'s lines of the batch in order. False after a failure, which leaves the
+    // books unusable.
+    bool process(const Batch& batch, std::size_t index, Output& output)
     {
-        return std::ranges::all_of(
-            lines, [&](const Line& line) { return apply(line.text, line.number, output); });
+        return std::ranges::all_of(batch.lines[index], [&](const Line& line) {
+            return apply(line.text, line.number, output);
+        });
     }
 
 private:
@@ -323,12 +328,33 @@ private:
 // Keeps the books of the stock locates whose messages it is given
 class ItchWorker {
 public:
-    // Apply the messages in order. False after a failure, which leaves the books unusable.
-    bool process(const std::vector<Line>& messages, Output& output)
+    // Apply the batch's messages whose stock locate selects worker `index`, in order. Messages too
+    // short to name a locate go to worker 0, which reports them. False after a failure, which
+    // leaves the books unusable.
+    bool process(const Batch& batch, std::size_t index, Output& output)
     {
-        return std::ranges::all_of(messages, [&](const Line& message) {
-            return apply(message.text, message.number, output);
-        });
+        const auto workers = batch.outputs.size();
+        const auto* const text = batch.text.data();
+        // Pick out this worker's messages without a branch per message, as most are another's
+        m_mine.resize(batch.starts.size());
+        std::size_t count = 0;
+        for (std::size_t record = 0; record < batch.starts.size(); ++record) {
+            const auto* const message = text + batch.starts[record];
+            const auto worker = workers > 1 && message_length(message) > length_size
+                                    ? message_length(message + length_size + 1) % workers
+                                    : 0;
+            m_mine[count] = static_cast<std::uint32_t>(record);
+            count += worker == index ? 1 : 0;
+        }
+        for (std::size_t mine = 0; mine < count; ++mine) {
+            const auto record = m_mine[mine];
+            const auto* const message = text + batch.starts[record];
+            if (!apply({message + length_size, message_length(message)}, batch.first + record,
+                       output)) {
+                return false;
+            }
+        }
+        return true;
     }
 
 private:
@@ -409,6 +435,8 @@ private:
     ItchMarket m_market;
     // Stock symbol of each locate's first add
     std::vector<std::string> m_tickers;
+    // Records of the current batch that are this worker's
+    std::vector<std::uint32_t> m_mine;
 };
 
 // Runs the workers over a queue of batches, which every worker processes in order
@@ -485,7 +513,7 @@ private:
             auto& output = batch->outputs[index];
             bool processed = false;
             try {
-                processed = worker.process(batch->lines[index], output);
+                processed = worker.process(*batch, index, output);
             }
             // Parse and apply errors are failures, so only resource exhaustion gets here
             // GCOVR_EXCL_START
@@ -528,31 +556,27 @@ std::size_t write_batch(Batch& batch, std::ostream& out, std::string& buffer, st
         }
         events += output.events;
     }
-    const auto limit =
-        failure != nullptr ? failure->first : std::numeric_limits<std::size_t>::max();
+    const auto stop = failure != nullptr ? failure->first - batch.first : batch.records;
 
-    // Merge the workers' lines, each list already in line order
+    // Which worker, plus one, wrote a line for each record, so that the lines are copied in record
+    // order without comparing the workers' next lines
+    std::vector<std::uint32_t> owners(batch.records, 0);
+    for (std::size_t worker = 0; worker < batch.outputs.size(); ++worker) {
+        for (const auto& line : batch.outputs[worker].lines) {
+            owners[line.first - batch.first] = static_cast<std::uint32_t>(worker + 1);
+        }
+    }
     buffer.clear();
     std::vector<std::size_t> next(batch.outputs.size(), 0);
-    while (true) {
-        const Output* earliest = nullptr;
-        std::size_t* position = nullptr;
-        for (std::size_t worker = 0; worker < next.size(); ++worker) {
-            const auto& output = batch.outputs[worker];
-            if (next[worker] < output.lines.size() && output.lines[next[worker]].first < limit &&
-                (earliest == nullptr ||
-                 output.lines[next[worker]].first < earliest->lines[*position].first)) {
-                earliest = &output;
-                position = &next[worker];
-            }
+    for (std::size_t record = 0; record < stop; ++record) {
+        if (owners[record] == 0) {
+            continue;
         }
-        if (earliest == nullptr) {
-            break;
-        }
-        const auto begin = *position == 0 ? 0 : earliest->lines[*position - 1].second;
-        const auto end = earliest->lines[*position].second;
-        buffer.append(earliest->text, begin, end - begin);
-        ++*position;
+        const auto& output = batch.outputs[owners[record] - 1];
+        auto& position = next[owners[record] - 1];
+        const auto begin = position == 0 ? 0 : output.lines[position - 1].second;
+        buffer.append(output.text, begin, output.lines[position].second - begin);
+        ++position;
     }
     out.write(buffer.data(), static_cast<std::streamsize>(buffer.size()));
 
@@ -565,7 +589,7 @@ std::size_t write_batch(Batch& batch, std::ostream& out, std::string& buffer, st
 // Replay with Framing to cut batches, assign to split them, and Worker to apply records
 template <typename Framing, typename Worker>
 std::size_t run(std::istream& in, std::ostream& out, std::size_t threads,
-                std::size_t (*assign)(Batch&, std::size_t), std::string_view unit)
+                std::size_t (*assign)(Batch&, std::size_t, Framing&&), std::string_view unit)
 {
     const auto workers = std::max<std::size_t>(threads, 1);
     BatchReader<Framing> reader(in);
@@ -578,15 +602,18 @@ std::size_t run(std::istream& in, std::ostream& out, std::size_t threads,
     while (true) {
         while (reading && queued < batches_in_flight) {
             auto batch = std::make_shared<Batch>();
-            reader.next(batch->text);
+            batch->outputs.resize(workers);
+            batch->pending = workers;
+            batch->first = next_record;
+            Framing framing;
+            reader.next(batch->text, framing);
+            // An empty batch assigns nothing
+            next_record = assign(*batch, next_record, std::move(framing));
             if (batch->text.empty()) {
                 reading = false;
                 break;
             }
-            batch->lines.resize(workers);
-            batch->outputs.resize(workers);
-            batch->pending = workers;
-            next_record = assign(*batch, next_record);
+            batch->records = next_record - batch->first;
             pipeline.push(std::move(batch));
             ++queued;
         }
