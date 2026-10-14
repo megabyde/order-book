@@ -103,7 +103,7 @@ class Encoder:
             raise EncodeError(f"time {time} does not fit ITCH's 48-bit timestamp")
         locate = self.locate(ticker, time)
 
-        if kind in "BS":
+        if kind in ("B", "S"):
             reference = int(order_id)
             if (ticker, order_id) in self.orders or not 0 < reference < MAX_ITCH_ORDER:
                 raise EncodeError(f"order ID '{order_id}' is live or not below {MAX_ITCH_ORDER}")
@@ -115,7 +115,7 @@ class Encoder:
             else:
                 self.message(self.header("F", locate, time) + body + b"TEST")
             self.adds += 1
-        elif kind in "CDEF":
+        elif kind in ("C", "D", "E", "F"):
             order = self.orders.get((ticker, order_id))
             if order is None:
                 raise EncodeError(f"unknown order '{order_id}'")
