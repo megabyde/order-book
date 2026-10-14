@@ -41,6 +41,12 @@ constexpr std::size_t batch_size = std::size_t{1} << 20U;
 // Batches read ahead of the one being written out
 constexpr std::size_t batches_in_flight = 4;
 
+// Messages between starting the loads an ITCH message will need and applying it. Its loads are
+// started in two stages, at this distance and at half of it, and the second stage still leaves
+// several messages, each over 50 ns on one core, for a miss to memory of roughly 100 ns. On the
+// real day, distances from 8 to 64 ran within 4% of each other.
+constexpr std::size_t prefetch_distance = 16;
+
 constexpr std::size_t max_digits = std::numeric_limits<std::uint64_t>::digits10 + 1;
 
 char* write_uint(char* out, std::uint64_t value)
@@ -346,11 +352,28 @@ public:
             m_mine[count] = static_cast<std::uint32_t>(record);
             count += worker == index ? 1 : 0;
         }
+        const auto bytes = [&](std::size_t mine) {
+            const auto* const message = text + batch.starts[m_mine[mine]];
+            return std::string_view(message + length_size, message_length(message));
+        };
         for (std::size_t mine = 0; mine < count; ++mine) {
-            const auto record = m_mine[mine];
-            const auto* const message = text + batch.starts[record];
-            if (!apply({message + length_size, message_length(message)}, batch.first + record,
-                       output)) {
+            // Applying a message is a chain of dependent loads: the order's index entry holds its
+            // level's handle, and the level names the book side to update. On the real day many
+            // of them miss the cache. A message is several hundred instructions, about as many
+            // as the core keeps in flight, so it cannot start the next message's loads while
+            // this one waits, and the misses are served one after another. Starting the loads of
+            // later messages here overlaps them instead. The two stages follow the chain: the
+            // index entry and the book, whose addresses the message gives, then the levels,
+            // whose handles those loads have brought in by the time the second stage runs.
+            if (mine + prefetch_distance < count) {
+                const auto ahead = peek_itch(bytes(mine + prefetch_distance));
+                m_market.prefetch(ahead.order, ahead.locate);
+            }
+            if (mine + (prefetch_distance / 2) < count) {
+                const auto ahead = peek_itch(bytes(mine + (prefetch_distance / 2)));
+                m_market.prefetch_levels(ahead.order, ahead.locate);
+            }
+            if (!apply(bytes(mine), batch.first + m_mine[mine], output)) {
                 return false;
             }
         }

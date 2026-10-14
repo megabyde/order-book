@@ -237,4 +237,29 @@ template <typename Handler> decltype(auto) visit_itch(std::string_view message, 
 /// reference of max_itch_order or above.
 [[nodiscard]] std::expected<ItchMessage, ItchError> decode_itch(std::string_view message);
 
+/// The stock locate and order reference number of a message, as peek_itch() reads them
+struct ItchPeek {
+    std::uint64_t order = 0;  ///< Order reference number
+    std::uint16_t locate = 0; ///< Stock locate
+    /// Same fields
+    friend bool operator==(const ItchPeek&, const ItchPeek&) = default;
+};
+
+/// The stock locate and order reference number of a message of a type the book uses, read without
+/// decoding it so that what the message touches can be loaded ahead; both 0 for a message too short
+/// to hold a reference number. The type's size is not checked, so a malformed message, or a type
+/// that names no order, gives an arbitrary number.
+inline ItchPeek peek_itch(std::string_view message)
+{
+    using itch_detail::order_offset;
+    if (message.size() < order_offset + sizeof(std::uint64_t) ||
+        itch_detail::message_size(message.front()) == 0) {
+        return {};
+    }
+    return {
+        .order = itch_detail::read<std::uint64_t>(message, order_offset),
+        .locate = itch_detail::read<std::uint16_t>(message, itch_detail::locate_offset),
+    };
+}
+
 } // namespace order_book

@@ -45,6 +45,12 @@ public:
     [[nodiscard]] std::expected<bool, BookError> remove(const ItchMessage& message);
     /// apply() for a Replace
     [[nodiscard]] std::expected<bool, BookError> replace(const ItchMessage& message);
+    /// Start loading the index entry of `order` and the book of `locate`, so that a message naming
+    /// them a few messages later does not wait for memory
+    void prefetch(std::uint64_t order, std::uint16_t locate) const;
+    /// Start loading the level of `order` and the best levels of `locate`'s book, once prefetch()
+    /// has loaded the index entry and the book that point to them
+    void prefetch_levels(std::uint64_t order, std::uint16_t locate) const;
     /// Current best bid and offer of `locate`
     [[nodiscard]] Bbo bbo(std::uint16_t locate) const;
     /// Number of live orders in every book
@@ -101,6 +107,8 @@ private:
     bool reduce(std::uint64_t order, Order& resting, std::uint32_t quantity);
     // The live order `order` of `locate`, or nullptr
     [[nodiscard]] Order* find(std::uint64_t order, std::uint16_t locate);
+    // The index entry of `order`, live or not, or nullptr if its page does not exist
+    [[nodiscard]] const Order* indexed(std::uint64_t order) const;
     // The slot in m_chunks of the page holding `order`, whose chunk exists
     [[nodiscard]] std::unique_ptr<Page>& page(std::uint64_t order);
     [[nodiscard]] std::vector<Entry>& side(std::uint16_t locate, Side side);
