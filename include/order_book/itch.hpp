@@ -13,8 +13,8 @@
 
 namespace order_book {
 
-/// Order reference numbers must be below this. Nasdaq assigns them in sequence from the start of
-/// each day, so a day's stay far below it, and the cap bounds the replay's reference index.
+/// Order reference numbers must be below this, which bounds the replay's reference index. Nasdaq
+/// starts them low each day: the largest on 2019-12-30 is 308,631,072.
 inline constexpr std::uint64_t max_itch_order = std::uint64_t{1} << 32U;
 
 /// What an ITCH message does

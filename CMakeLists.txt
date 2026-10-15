@@ -195,8 +195,9 @@ if(Doxygen_FOUND)
     # LICENSE is also an input, not just an HTML_EXTRA_FILES entry. Editing it then invalidates the
     # docs target, and Doxygen includes it in the source browser.
     doxygen_add_docs(
-        docs ${PROJECT_SOURCE_DIR}/README.md ${PROJECT_SOURCE_DIR}/docs/development.md
-        ${PROJECT_SOURCE_DIR}/LICENSE ${PROJECT_SOURCE_DIR}/include
+        docs ${PROJECT_SOURCE_DIR}/README.md ${PROJECT_SOURCE_DIR}/docs/architecture.md
+        ${PROJECT_SOURCE_DIR}/docs/development.md ${PROJECT_SOURCE_DIR}/LICENSE
+        ${PROJECT_SOURCE_DIR}/include
         WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
         COMMENT "Generate API documentation"
     )
