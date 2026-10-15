@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -92,19 +93,24 @@ private:
         std::uint32_t level;
     };
     // Small pages, because each worker keeps only the locates assigned to it, so its orders are a
-    // sparse subset of every range of reference numbers, and long-lived orders keep pages alive
-    static constexpr unsigned page_bits = 8;
+    // sparse subset of every range of reference numbers, and long-lived orders keep pages alive. On
+    // the 2019-12-30 day, 128 reference numbers a page gave the lowest peak with ten workers:
+    // smaller pages need more of the directory, which every worker keeps for every range it uses.
+    static constexpr unsigned page_bits = 7;
     static constexpr std::size_t page_size = std::size_t{1} << page_bits;
-    // The orders of page_size consecutive reference numbers
-    struct Page {
-        std::array<Order, page_size> orders{};
-        std::uint32_t live = 0;
-    };
-    // The pages of chunk_size consecutive page numbers. The index makes a chunk only for a page it
-    // uses, so a high reference number costs one chunk rather than a slot for every page below it.
-    static constexpr unsigned chunk_bits = 8;
+    // The orders of page_size consecutive reference numbers, exactly 1 KiB: with its live count
+    // beside the orders, the allocator would round a page up by a quarter
+    using Page = std::array<Order, page_size>;
+    // The pages of chunk_size consecutive page numbers, and how many live orders each holds. The
+    // index makes a chunk only for a page it uses, so a high reference number costs one chunk
+    // rather than a slot for every page below it.
+    static constexpr unsigned chunk_bits = 9;
     static constexpr std::size_t chunk_size = std::size_t{1} << chunk_bits;
-    using Chunk = std::array<std::unique_ptr<Page>, chunk_size>;
+    struct Chunk {
+        std::array<std::unique_ptr<Page>, chunk_size> pages;
+        std::array<std::uint8_t, chunk_size> live{};
+    };
+    static_assert(page_size <= std::numeric_limits<std::uint8_t>::max());
 
     // Take `quantity` off `resting`, the order `order`, removing it and then its level once they
     // reach 0; returns whether its book's best bid or offer changed. Removing an order of
@@ -114,8 +120,13 @@ private:
     [[nodiscard]] Order* find(std::uint64_t order, std::uint16_t locate);
     // The index entry of `order`, live or not, or nullptr if its page does not exist
     [[nodiscard]] const Order* indexed(std::uint64_t order) const;
-    // The slot in m_chunks of the page holding `order`, whose chunk exists
-    [[nodiscard]] std::unique_ptr<Page>& page(std::uint64_t order);
+    // The chunk of `order`, which exists
+    [[nodiscard]] Chunk& chunk(std::uint64_t order);
+    // Where the page of `order` is in its chunk
+    [[nodiscard]] static std::size_t page_slot(std::uint64_t order)
+    {
+        return (order >> page_bits) & (chunk_size - 1);
+    }
     [[nodiscard]] std::vector<Entry>& side(std::uint16_t locate, Side side);
     // Where the level at `price` is in `levels`, worst first, or where it would be inserted:
     // levels[result - 1] is the first from the best that is not better than `price`

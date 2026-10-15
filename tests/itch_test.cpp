@@ -451,9 +451,10 @@ TEST(ItchMarketTest, ReusesEmptiedPagesAndSlots)
     }
 }
 
-// Both sides of a page boundary and of a 256-page chunk boundary, and the last reference
+// Both sides of a 128-reference page boundary and of a 65,536-reference chunk boundary, and the
+// last reference
 constexpr std::array<std::uint64_t, 6> spread_orders{
-    1, 255, 256, 65'535, 65'536, first_out_of_range - 1,
+    1, 127, 128, 65'535, 65'536, first_out_of_range - 1,
 };
 
 // Sell spread_orders[i] at 1000 + i, 10 * (i + 1) shares, so the orders' asks rise in their order
@@ -489,7 +490,7 @@ TEST(ItchMarketTest, IndexesTheWholeReferenceRange)
     EXPECT_EQ(market.order_count(), spread_orders.size());
     // An unused page of a used chunk, an unused chunk, and a locate the orders are not in
     const auto unknown = std::unexpected(BookError::UnknownOrder);
-    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, 65'536 + 256)), unknown);
+    EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, 65'536 + 128)), unknown);
     EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, std::uint64_t{1} << 20U)), unknown);
     EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 2, spread_orders.back())), unknown);
     EXPECT_TRUE(delete_spread(market));

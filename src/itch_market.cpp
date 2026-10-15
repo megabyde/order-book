@@ -131,7 +131,9 @@ std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
     if (!m_chunks[chunk_index]) {
         m_chunks[chunk_index] = std::make_unique<Chunk>();
     }
-    auto& page = this->page(message.order);
+    auto& chunk = *m_chunks[chunk_index];
+    const auto slot = page_slot(message.order);
+    auto& page = chunk.pages[slot];
     if (!page) {
         if (m_spare_pages.empty()) {
             page = std::make_unique<Page>();
@@ -141,7 +143,7 @@ std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
             m_spare_pages.pop_back();
         }
     }
-    auto* resting = &page->orders[message.order & (page_size - 1)];
+    auto* resting = &(*page)[message.order & (page_size - 1)];
     const auto overflow = resting->level != 0 && m_levels[resting->level].locate != message.locate;
     if (overflow) {
         const auto [entry, inserted] =
@@ -189,7 +191,7 @@ std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
 
     *resting = Order{.remaining = static_cast<std::uint32_t>(message.shares), .level = handle};
     if (!overflow) {
-        ++page->live;
+        ++chunk.live[slot];
     }
     ++m_order_count;
     return index == levels.size() && (created || message.shares != 0);
@@ -221,10 +223,12 @@ bool ItchMarket::reduce(std::uint64_t order, Order& resting, std::uint32_t quant
     }
     --m_order_count;
     // A live order's chunk exists, whether the order is in the index or in m_overflow
-    auto& page = this->page(order);
-    if (page && &resting == &page->orders[order & (page_size - 1)]) {
+    auto& chunk = this->chunk(order);
+    const auto slot = page_slot(order);
+    auto& page = chunk.pages[slot];
+    if (page && &resting == &(*page)[order & (page_size - 1)]) {
         resting.level = 0;
-        if (--page->live == 0) {
+        if (--chunk.live[slot] == 0) {
             m_spare_pages.push_back(std::move(page));
         }
     }
@@ -240,8 +244,8 @@ ItchMarket::Order* ItchMarket::find(std::uint64_t order, std::uint16_t locate)
 {
     const auto chunk = order >> (page_bits + chunk_bits);
     if (chunk < m_chunks.size() && m_chunks[chunk]) {
-        if (const auto& page = this->page(order)) {
-            auto& resting = page->orders[order & (page_size - 1)];
+        if (const auto& page = m_chunks[chunk]->pages[page_slot(order)]) {
+            auto& resting = (*page)[order & (page_size - 1)];
             if (resting.level != 0 && m_levels[resting.level].locate == locate) {
                 return &resting;
             }
@@ -291,13 +295,13 @@ const ItchMarket::Order* ItchMarket::indexed(std::uint64_t order) const
     if (chunk >= m_chunks.size() || !m_chunks[chunk]) {
         return nullptr;
     }
-    const auto& page = (*m_chunks[chunk])[(order >> page_bits) & (chunk_size - 1)];
-    return page ? &page->orders[order & (page_size - 1)] : nullptr;
+    const auto& page = m_chunks[chunk]->pages[page_slot(order)];
+    return page ? &(*page)[order & (page_size - 1)] : nullptr;
 }
 
-std::unique_ptr<ItchMarket::Page>& ItchMarket::page(std::uint64_t order)
+ItchMarket::Chunk& ItchMarket::chunk(std::uint64_t order)
 {
-    return (*m_chunks[order >> (page_bits + chunk_bits)])[(order >> page_bits) & (chunk_size - 1)];
+    return *m_chunks[order >> (page_bits + chunk_bits)];
 }
 
 std::vector<ItchMarket::Entry>& ItchMarket::side(std::uint16_t locate, Side side)
