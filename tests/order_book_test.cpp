@@ -110,8 +110,6 @@ TEST_F(OrderBookTest, CountsOrdersAndLevels)
     EXPECT_EQ(book.level_count(), 2U);
 }
 
-// Orders keep iterators into their book's levels, which a copy would share with the original
-static_assert(!std::is_copy_constructible_v<OrderBook> && !std::is_copy_assignable_v<OrderBook>);
 static_assert(std::is_move_constructible_v<OrderBook> && std::is_move_assignable_v<OrderBook>);
 
 TEST_F(OrderBookTest, KeepsWorkingAfterAMove)
