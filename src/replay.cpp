@@ -36,7 +36,7 @@ namespace order_book {
 
 namespace {
 
-// Workers receive the input in batches of whole lines of at least this size
+// Workers receive the input in batches of whole records of at least this size
 constexpr std::size_t batch_size = std::size_t{1} << 20U;
 // Batches read ahead of the one being written out
 constexpr std::size_t batches_in_flight = 4;

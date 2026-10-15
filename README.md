@@ -90,7 +90,8 @@ replace that names no live order of its stock.
 
 ### Design
 
-The library in `include/order_book/` has five parts:
+[Architecture](docs/architecture.md) follows a batch through the threads and the books, and gives
+the measurements behind each choice. The library in `include/order_book/` has five parts:
 
 - [`feed.hpp`](include/order_book/feed.hpp): `parse_line()` turns a line into a `Message` whose
   event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
@@ -158,7 +159,7 @@ stable across toolchain changes.
 ├── tests/                   unit, application, and differential tests; sample feed in tests/data/
 ├── bench/                   Google Benchmark suite
 ├── scripts/                 feed tools, reference model, benchmark summary, Conan settings check
-├── docs/                    development workflows
+├── docs/                    architecture and development workflows
 ├── conanfile.py             Conan dependency definition
 ├── conan/settings_user.yml  custom sanitizer setting
 ├── profiles/                default and sanitizer Conan profiles

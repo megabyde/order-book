@@ -354,14 +354,14 @@ delete_best(ItchMarket& market,
 
 TEST(ItchMarketTest, EmptiesOrdersSharingReferenceNumbers)
 {
-    // Orders 1 and 2 each in the index once and in the side map for the other locates
+    // Orders 1 and 2 each in the index once and in the hash map for the other locates
     auto market = shared_order();
     ASSERT_TRUE(market.apply(add_message(3, 2, Side::Buy, 2990, 1)));
     ASSERT_TRUE(market.apply(add_message(2, 2, Side::Sell, 1990, 1)));
     EXPECT_TRUE(delete_best(market, {{3, 1}, {1, 1}, {2, 2}, {3, 2}, {2, 1}}));
     EXPECT_EQ(market.order_count(), 0U);
     EXPECT_EQ(market.level_count(), 0U);
-    // Nothing is left behind in the index or the side map
+    // Nothing is left behind in the index or the hash map
     EXPECT_EQ(market.apply(add_message(1, 1, Side::Buy, 1000, 1)), true);
     EXPECT_EQ(market.apply(add_message(2, 1, Side::Buy, 1000, 1)), true);
     EXPECT_EQ(market.apply(add_message(3, 1, Side::Buy, 1000, 1)), true);

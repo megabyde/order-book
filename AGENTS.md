@@ -11,6 +11,8 @@ and offer whenever it changes. It was generated from
 Documentation is split by what it serves:
 
 - `README.md`: the entry point. What the program does, and how to build and run it.
+- `docs/architecture.md`: how the replay works and the measurements behind it. A change to the
+  pipeline, a book, or a measured result updates it in the same commit.
 - `docs/development.md`: the workflow reference. Sanitizers, tests, benchmarks, presets, the lock
   file, formatting and linting, coverage, documentation, build policy, and IDE setup.
 - `SECURITY.md`: the vulnerability reporting process.
