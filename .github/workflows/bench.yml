@@ -1,0 +1,87 @@
+name: Bench
+
+# Report only: the numbers go to each run's summary and an artifact, and nothing fails on them.
+# Shared runners vary from run to run, so compare runners and commits over several runs.
+on:
+  push:
+    branches: [main]
+  # A change to the benchmark tooling runs it before merge
+  pull_request:
+    paths: [.github/workflows/bench.yml, scripts/bench_summary.py]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: bench / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      # Windows has python and no python3
+      - name: Load CI env
+        run: |
+          cat .github/ci.env >> "$GITHUB_ENV"
+          echo "RUNNER_IMAGE=$ImageOS-$ImageVersion" >> "$GITHUB_ENV"
+          echo "PYTHON=$([ "$RUNNER_OS" = Windows ] && echo python || echo python3)" >> "$GITHUB_ENV"
+      # The Linux images' default GCC predates the project's C++23 floor
+      - name: Install GCC 14
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-14 g++-14
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+      - uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-bench-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-bench-${{ env.RUNNER_IMAGE }}-
+      - name: Build the release benchmarks
+        run: |
+          conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
+          cmake --preset release
+          cmake --build --preset release --target order_book_bench
+      # The same seeded feeds as make bench, and the deep one encoded as ITCH
+      - name: Generate the feeds
+        run: |
+          mkdir -p build/bench
+          "$PYTHON" scripts/gen_feed.py --events 1000000 --tickers 8 --seed 1 -o build/bench/feed.csv
+          "$PYTHON" scripts/gen_feed.py --events 4000000 --tickers 200 --depth 4000 --seed 2 \
+            -o build/bench/deep.csv
+          "$PYTHON" scripts/csv_to_itch.py build/bench/deep.csv -o build/bench/deep.itch
+      - name: Run the benchmarks
+        run: |
+          separator=$([ "$RUNNER_OS" = Windows ] && echo ';' || echo ':')
+          # The Visual Studio generator puts each configuration in its own directory
+          if [ "$RUNNER_OS" = Windows ]; then
+            bench=build/release/Release/order_book_bench.exe
+          else
+            bench=build/release/order_book_bench
+          fi
+          ORDER_BOOK_REPLAY_CSV="build/bench/feed.csv${separator}build/bench/deep.csv" \
+            ORDER_BOOK_REPLAY_ITCH=build/bench/deep.itch \
+            "$bench" --benchmark_repetitions=3 --benchmark_report_aggregates_only=true \
+            --benchmark_out=bench.json --benchmark_out_format=json
+      - name: Summarize
+        run: |
+          "$PYTHON" scripts/bench_summary.py bench.json "${{ matrix.os }} ($RUNNER_ARCH)" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bench-${{ matrix.os }}
+          path: bench.json

@@ -128,6 +128,13 @@ ORDER_BOOK_REPLAY_ITCH=/path/to/12302019.NASDAQ_ITCH50 \
   make bench BENCH_ARGS='--benchmark_filter=BM_ItchEngine --benchmark_repetitions=3'
 ```
 
+The Bench workflow runs the suite on every push to `main` on four GitHub runners: x86-64 Linux,
+Arm64 Linux, macOS on Apple silicon, and x86-64 Windows. Each replays the two seeded feeds above and
+the deep one encoded as ITCH by `scripts/csv_to_itch.py`, then posts a table to the run's summary
+with [`scripts/bench_summary.py`](../scripts/bench_summary.py) and uploads the Google Benchmark JSON
+as an artifact. Shared runners vary from run to run, so the workflow reports and never fails, and a
+comparison between runners or commits needs several runs. Run it on a branch from the Actions tab.
+
 `BENCH_ARGS` replaces the default Google Benchmark flags, 10 repetitions reporting aggregates only.
 For example, `make bench BENCH_ARGS=--benchmark_filter=BM_Replay` runs the replays alone.
 

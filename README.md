@@ -157,7 +157,7 @@ stable across toolchain changes.
 ├── src/                     library and application sources
 ├── tests/                   unit, application, and differential tests; sample feed in tests/data/
 ├── bench/                   Google Benchmark suite
-├── scripts/                 feed generator, reference model, Conan settings check
+├── scripts/                 feed tools, reference model, benchmark summary, Conan settings check
 ├── docs/                    development workflows
 ├── conanfile.py             Conan dependency definition
 ├── conan/settings_user.yml  custom sanitizer setting
