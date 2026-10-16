@@ -81,7 +81,10 @@ reference number, without a hash.
 
 Both books keep their levels in a `LevelPool` from `levels.hpp`. Sorted vectors with binary search
 had lost 12% in the CSV book; searching from the best end, with orders holding a handle to a pooled
-record, did not.
+record, did not. `LevelPool::add()` handles only an order that joins an existing level, as most do,
+and leaves a new level to `create()`, out of line, whose vector insert costs more than the call.
+Written as one function, the compiler kept `add()` out of line once both books called it, and
+`BM_ItchEngine` ran about 2% slower on the ITCH day: 51.9–54.1 ns per message against 50.6–52.9.
 
 Decoding is a single dispatch: `visit_itch()` reads the type byte and calls the handler method for
 the message's kind with the decoded fields, so the replay looks at the type once.
