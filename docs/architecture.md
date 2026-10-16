@@ -57,13 +57,18 @@ add 3.3 s of CPU without making the run shorter.
 
 ## The CSV book
 
-`OrderBook` keeps one ticker's book with string order IDs, as the CSV format gives them. Each side
-is a `std::map` from price to a level that holds the total of its orders and their count, ordered
-best price first, so the best level is `begin()` and a change to it is a change to the BBO. Orders
-live in a `std::vector` that reuses removed positions, and each holds an iterator to its level. An
-open-addressing index with linear probing, kept at most half full, maps an order ID to its position;
-each slot also keeps the low bits of the ID's hash, which skips most string comparisons. An event
-costs one index lookup, plus a level lookup for an add.
+`OrderBook` keeps one ticker's book with string order IDs, as the CSV format gives them. A level is
+a pooled record with its total, price, order count, and side, and each side is a vector of prices and
+level handles, worst first, so the best level is the last element and a change to it is a change to
+the BBO. Finding a price scans from the best end, where most adds and removals happen. Orders live
+in a `std::vector` that reuses removed positions, and each holds its remaining quantity and its
+level's handle, so an execution or delete reaches the level without a search. An open-addressing
+index with linear probing, kept at most half full, maps an order ID to its position; each slot also
+keeps the low bits of the ID's hash, which skips most string comparisons.
+
+The levels were a `std::map` per side until the ITCH market's structure measured faster here too.
+On one thread, the 113.6M-event synthetic feed replayed in 27.6–30.4 s instead of 31.0–31.8 s and
+the deep feed in 547–605 ms instead of 592–663 ms; the shallow feed did not change.
 
 ## The ITCH market
 
@@ -74,9 +79,8 @@ number is an integer, unique for the day across all stocks and assigned in seque
 books for all its locates share one `ItchMarket`, which finds an order by shifting and masking its
 reference number, without a hash.
 
-The levels differ for a weaker reason. Sorted vectors with binary search lost 12% in the CSV book on
-a shallow feed; the ITCH market searches its vectors from the best end and pairs them with pooled
-level records that orders reach by handle, and that combination has not been tried in the CSV book.
+Both books keep their levels the same way. Sorted vectors with binary search had lost 12% in the
+CSV book; searching from the best end, with orders holding a handle to a pooled record, did not.
 
 Decoding is a single dispatch: `visit_itch()` reads the type byte and calls the handler method for
 the message's kind with the decoded fields, so the replay looks at the type once.

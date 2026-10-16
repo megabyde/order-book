@@ -99,12 +99,11 @@ the measurements behind each choice. The library in `include/order_book/` has fi
 - [`itch.hpp`](include/order_book/itch.hpp): `visit_itch()` decodes one ITCH message and calls the
   handler method for its kind, so the replay dispatches on the type byte once; `decode_itch()`
   returns the same fields as an `ItchMessage`. It is the only code that knows the ITCH layout.
-- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed. Each
-  side is a `std::map` from price to a level holding a running total and an order count, ordered
-  best price first so that the best level is `begin()`. Orders live in a `std::vector` that reuses removed
-  positions, and an open-addressing index from order ID to position finds any order in one hash
-  lookup. An event costs that lookup, plus a level lookup for an add, whatever the depth of the
-  level.
+- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed. A
+  level is a pooled record with a running total and an order count, and each side is a vector of
+  prices and level handles, worst first, so the best level is the last. Orders live in a
+  `std::vector` that reuses removed positions and hold their level's handle, and an
+  open-addressing index from order ID to position finds any order in one hash lookup.
 - [`itch_market.hpp`](include/order_book/itch_market.hpp): the books of every stock locate for ITCH.
   ITCH reference numbers are unique for the day and assigned in sequence, so orders live in small
   pages of consecutive reference numbers, found through a two-level directory that holds only the

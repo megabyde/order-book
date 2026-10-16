@@ -5,7 +5,6 @@
 #include <expected>
 #include <functional>
 #include <limits>
-#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -52,25 +51,11 @@ enum class BookError : std::uint8_t {
  *
  * The exchange has already matched the orders: each message applies to the resting order it
  * names, and the book never matches orders itself. Each price level keeps a running total and a
- * count of its orders, and every order is reachable from its ID in expected constant time.
+ * count of its orders, and every order is reachable from its ID in expected constant time. Each
+ * side lists its levels worst price first, so most adds and removals touch only its end.
  */
 class OrderBook {
 public:
-    /// An empty book
-    OrderBook() = default;
-    /// Not copyable: orders keep iterators into the levels, which a copy would leave pointing
-    /// into the original. A container of books then moves them even where std::map's move
-    /// constructor may throw, as on MSVC.
-    OrderBook(const OrderBook&) = delete;
-    /// Not copyable
-    OrderBook& operator=(const OrderBook&) = delete;
-    /// Takes `other`'s orders and levels, whose iterators stay valid
-    OrderBook(OrderBook&& other) = default;
-    /// Takes `other`'s orders and levels
-    OrderBook& operator=(OrderBook&& other) = default;
-    /// Frees the orders and levels
-    ~OrderBook() = default;
-
     /// Apply `event` to the order with ID `order`, returning whether the best bid or offer
     /// changed; on error the book is unchanged
     [[nodiscard]] std::expected<bool, BookError> apply(std::string_view order, const Event& event);
@@ -82,30 +67,23 @@ public:
     [[nodiscard]] std::size_t level_count() const { return m_bids.size() + m_asks.size(); }
 
 private:
-    struct PriceLevel {
-        Quantity total = 0;
-        std::size_t orders = 0;
+    // A pooled level, with its side, so that an order need not repeat it
+    struct LevelRecord {
+        Quantity total;
+        Price price;
+        std::uint32_t orders;
+        Side side;
     };
-    // Orders a side's prices best first, so its best level is begin(), which std::map keeps in
-    // constant time; one type for both sides lets an order hold a level of either
-    class BestFirst {
-    public:
-        explicit BestFirst(Side side) : m_descending(side == Side::Buy) {}
-        [[nodiscard]] bool operator()(Price lhs, Price rhs) const
-        {
-            return m_descending ? lhs > rhs : lhs < rhs;
-        }
-
-    private:
-        bool m_descending;
+    // An element of a side's levels, worst price first: the price beside the level's handle, so
+    // that finding a price reads no level record
+    struct Entry {
+        Price price;
+        std::uint32_t level;
     };
-    // std::map iterators survive inserts and erases of other levels
-    using Levels = std::map<Price, PriceLevel, BestFirst>;
     struct Order {
         std::string id;
-        Levels::iterator level;
         Quantity remaining;
-        Side side;
+        std::uint32_t level;
     };
     // Open-addressing index entry: where the order sits in m_orders, and the low bits of its ID's
     // hash, which place it in the table and skip most string comparisons
@@ -122,9 +100,16 @@ private:
     // Empty `slot`, shifting later entries of the probe run back so that no lookup stops early
     void erase(std::size_t slot);
     void grow();
+    // Where the level at `price` is in `levels`, worst first, or where it would be inserted:
+    // levels[result - 1] is the first from the best that is not better than `price`
+    [[nodiscard]] static std::size_t level_position(const std::vector<Entry>& levels, Side side,
+                                                    Price price);
 
-    Levels m_bids{BestFirst(Side::Buy)};
-    Levels m_asks{BestFirst(Side::Sell)};
+    std::vector<Entry> m_bids;
+    std::vector<Entry> m_asks;
+    // Levels by handle; freed handles are listed in m_free_levels and reused
+    std::vector<LevelRecord> m_levels;
+    std::vector<std::uint32_t> m_free_levels;
     // Orders by position; removed positions are listed in m_free and reused
     std::vector<Order> m_orders;
     std::vector<std::uint32_t> m_free;
