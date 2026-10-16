@@ -1,4 +1,5 @@
 #include <order_book/feed.hpp>
+#include <order_book/levels.hpp>
 #include <order_book/order_book.hpp>
 
 #include <algorithm>
@@ -19,12 +20,6 @@ namespace {
 std::uint32_t hash_id(std::string_view id)
 {
     return static_cast<std::uint32_t>(std::hash<std::string_view>{}(id));
-}
-
-// Whether `lhs` is a worse price than `rhs` on `side`: lower for bids, higher for asks
-bool worse(Side side, Price lhs, Price rhs)
-{
-    return side == Side::Buy ? lhs < rhs : lhs > rhs;
 }
 
 } // namespace
@@ -57,25 +52,10 @@ std::expected<bool, BookError> OrderBook::apply(std::string_view order, const Ev
         quantity = std::min(execute->shares, remaining);
     }
 
-    auto& level = m_levels[resting.level];
-    auto& levels = level.side == Side::Buy ? m_bids : m_asks;
-    const auto best = levels.back().level == resting.level;
-    // Only the best level shows in the BBO, and only if its total changes or it goes away
-    auto changed = best && quantity != 0;
-    level.total -= quantity;
     resting.remaining -= quantity;
-    if (resting.remaining == 0) {
-        if (--level.orders == 0) {
-            changed = best;
-            if (best) {
-                levels.pop_back();
-            }
-            else {
-                const auto index = level_position(levels, level.side, level.price);
-                levels.erase(levels.begin() + static_cast<std::ptrdiff_t>(index - 1));
-            }
-            m_free_levels.push_back(resting.level);
-        }
+    const auto removed = resting.remaining == 0;
+    const auto changed = m_levels.reduce(m_book, resting.level, quantity, removed);
+    if (removed) {
         m_free.push_back(position);
         erase(slot);
     }
@@ -84,16 +64,7 @@ std::expected<bool, BookError> OrderBook::apply(std::string_view order, const Ev
 
 Bbo OrderBook::bbo() const
 {
-    Bbo bbo;
-    if (!m_bids.empty()) {
-        const auto& best = m_bids.back();
-        bbo.bid = Level{.price = best.price, .quantity = m_levels[best.level].total};
-    }
-    if (!m_asks.empty()) {
-        const auto& best = m_asks.back();
-        bbo.ask = Level{.price = best.price, .quantity = m_levels[best.level].total};
-    }
-    return bbo;
+    return m_levels.bbo(m_book);
 }
 
 std::expected<bool, BookError> OrderBook::add(std::string_view order, const AddOrder& add)
@@ -108,32 +79,7 @@ std::expected<bool, BookError> OrderBook::add(std::string_view order, const AddO
         slot = find(order, hash);
     }
 
-    auto& levels = add.side == Side::Buy ? m_bids : m_asks;
-    auto index = level_position(levels, add.side, add.price);
-    std::uint32_t handle = 0;
-    const auto created = index == 0 || levels[index - 1].price != add.price;
-    if (created) {
-        if (m_free_levels.empty()) {
-            handle = static_cast<std::uint32_t>(m_levels.size());
-            m_levels.emplace_back();
-        }
-        else {
-            handle = m_free_levels.back();
-            m_free_levels.pop_back();
-        }
-        m_levels[handle] =
-            LevelRecord{.total = 0, .price = add.price, .orders = 0, .side = add.side};
-        levels.insert(levels.begin() + static_cast<std::ptrdiff_t>(index),
-                      Entry{.price = add.price, .level = handle});
-        ++index;
-    }
-    else {
-        handle = levels[index - 1].level;
-    }
-    auto& level = m_levels[handle];
-    level.total += add.shares;
-    ++level.orders;
-    const auto changed = index == levels.size() && (created || add.shares != 0);
+    const auto [level, changed] = m_levels.add(m_book, add);
 
     std::uint32_t position = 0;
     if (m_free.empty()) {
@@ -148,7 +94,7 @@ std::expected<bool, BookError> OrderBook::add(std::string_view order, const AddO
     auto& resting = m_orders[position];
     resting.id = order;
     resting.remaining = add.shares;
-    resting.level = handle;
+    resting.level = level;
     m_index[slot] = Slot{.order = position, .hash = hash};
     return changed;
 }
@@ -196,16 +142,6 @@ void OrderBook::grow()
         index[slot] = entry;
     }
     m_index = std::move(index);
-}
-
-std::size_t OrderBook::level_position(const std::vector<Entry>& levels, Side side, Price price)
-{
-    // Most adds and removals are near the top of the book, which is the end of the vector
-    auto index = levels.size();
-    while (index > 0 && worse(side, price, levels[index - 1].price)) {
-        --index;
-    }
-    return index;
 }
 
 } // namespace order_book

@@ -5,12 +5,12 @@
 #include <expected>
 #include <functional>
 #include <limits>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <order_book/feed.hpp>
+#include <order_book/levels.hpp>
 
 namespace order_book {
 
@@ -22,22 +22,6 @@ struct StringHash {
     {
         return std::hash<std::string_view>{}(text);
     }
-};
-
-/// Price and total resting quantity of one level
-struct Level {
-    Price price;       ///< Level price
-    Quantity quantity; ///< Sum of the remaining quantity of every order at this price
-    /// Same price and quantity
-    friend bool operator==(const Level&, const Level&) = default;
-};
-
-/// Best bid and offer; an empty side has no level
-struct Bbo {
-    std::optional<Level> bid; ///< Highest bid level
-    std::optional<Level> ask; ///< Lowest ask level
-    /// Same levels on both sides
-    friend bool operator==(const Bbo&, const Bbo&) = default;
 };
 
 /// Why OrderBook::apply() rejected a message
@@ -64,22 +48,9 @@ public:
     /// Number of resting orders on both sides
     [[nodiscard]] std::size_t order_count() const { return m_orders.size() - m_free.size(); }
     /// Number of price levels on both sides
-    [[nodiscard]] std::size_t level_count() const { return m_bids.size() + m_asks.size(); }
+    [[nodiscard]] std::size_t level_count() const { return m_levels.size(); }
 
 private:
-    // A pooled level, with its side, so that an order need not repeat it
-    struct LevelRecord {
-        Quantity total;
-        Price price;
-        std::uint32_t orders;
-        Side side;
-    };
-    // An element of a side's levels, worst price first: the price beside the level's handle, so
-    // that finding a price reads no level record
-    struct Entry {
-        Price price;
-        std::uint32_t level;
-    };
     struct Order {
         std::string id;
         Quantity remaining;
@@ -100,16 +71,9 @@ private:
     // Empty `slot`, shifting later entries of the probe run back so that no lookup stops early
     void erase(std::size_t slot);
     void grow();
-    // Where the level at `price` is in `levels`, worst first, or where it would be inserted:
-    // levels[result - 1] is the first from the best that is not better than `price`
-    [[nodiscard]] static std::size_t level_position(const std::vector<Entry>& levels, Side side,
-                                                    Price price);
 
-    std::vector<Entry> m_bids;
-    std::vector<Entry> m_asks;
-    // Levels by handle; freed handles are listed in m_free_levels and reused
-    std::vector<LevelRecord> m_levels;
-    std::vector<std::uint32_t> m_free_levels;
+    BookLevels m_book;
+    LevelPool m_levels;
     // Orders by position; removed positions are listed in m_free and reused
     std::vector<Order> m_orders;
     std::vector<std::uint32_t> m_free;

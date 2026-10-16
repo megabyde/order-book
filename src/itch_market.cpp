@@ -1,6 +1,7 @@
 #include <order_book/feed.hpp>
 #include <order_book/itch.hpp>
 #include <order_book/itch_market.hpp>
+#include <order_book/levels.hpp>
 #include <order_book/order_book.hpp>
 
 #include <algorithm>
@@ -16,12 +17,6 @@
 namespace order_book {
 
 namespace {
-
-// Whether `lhs` is a worse price than `rhs` on `side`: lower for bids, higher for asks
-bool worse(Side side, Price lhs, Price rhs)
-{
-    return side == Side::Buy ? lhs < rhs : lhs > rhs;
-}
 
 constexpr unsigned locate_bits = std::numeric_limits<std::uint16_t>::digits;
 
@@ -106,20 +101,7 @@ std::expected<bool, BookError> ItchMarket::replace(const ItchMessage& message)
 
 Bbo ItchMarket::bbo(std::uint16_t locate) const
 {
-    Bbo bbo;
-    if (locate >= m_books.size()) {
-        return bbo;
-    }
-    const auto& book = m_books[locate];
-    if (!book.bids.empty()) {
-        const auto& best = book.bids.back();
-        bbo.bid = Level{.price = best.price, .quantity = m_levels[best.level].total};
-    }
-    if (!book.asks.empty()) {
-        const auto& best = book.asks.back();
-        bbo.ask = Level{.price = best.price, .quantity = m_levels[best.level].total};
-    }
-    return bbo;
+    return locate < m_books.size() ? m_levels.bbo(m_books[locate]) : Bbo{};
 }
 
 std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
@@ -158,69 +140,26 @@ std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
         return std::unexpected(BookError::DuplicateOrder);
     }
 
-    auto& levels = side(message.locate, message.side);
-    auto index = position(levels, message.side, message.price);
-    std::uint32_t handle = 0;
-    const auto created = index == 0 || levels[index - 1].price != message.price;
-    if (created) {
-        if (m_free_levels.empty()) {
-            handle = static_cast<std::uint32_t>(m_levels.size());
-            m_levels.emplace_back();
-        }
-        else {
-            handle = m_free_levels.back();
-            m_free_levels.pop_back();
-        }
-        m_levels[handle] = LevelRecord{
-            .total = 0,
-            .price = message.price,
-            .orders = 0,
-            .locate = message.locate,
-            .side = message.side,
-        };
-        levels.insert(levels.begin() + static_cast<std::ptrdiff_t>(index),
-                      Entry{.price = message.price, .level = handle});
-        ++index;
-    }
-    else {
-        handle = levels[index - 1].level;
-    }
-    auto& level = m_levels[handle];
-    level.total += message.shares;
-    ++level.orders;
-
-    *resting = Order{.remaining = static_cast<std::uint32_t>(message.shares), .level = handle};
+    const AddOrder add{.side = message.side, .price = message.price, .shares = message.shares};
+    const auto [level, changed] = m_levels.add(book(message.locate), add, message.locate);
+    *resting = Order{.remaining = static_cast<std::uint32_t>(message.shares), .level = level};
     if (!overflow) {
         ++chunk.live[slot];
     }
     ++m_order_count;
-    return index == levels.size() && (created || message.shares != 0);
+    return changed;
 }
 
 bool ItchMarket::reduce(std::uint64_t order, Order& resting, std::uint32_t quantity)
 {
-    auto& level = m_levels[resting.level];
-    auto& levels = side(level.locate, level.side);
-    const auto best = levels.back().level == resting.level;
-    // Only the best level shows in the BBO, and only if its total changes or it goes away
-    auto changed = best && quantity != 0;
-    level.total -= quantity;
+    const auto locate = m_levels[resting.level].locate;
     resting.remaining -= quantity;
-    if (resting.remaining != 0) {
+    const auto removed = resting.remaining == 0;
+    const auto changed = m_levels.reduce(m_books[locate], resting.level, quantity, removed);
+    if (!removed) {
         return changed;
     }
 
-    if (--level.orders == 0) {
-        changed = best;
-        if (best) {
-            levels.pop_back();
-        }
-        else {
-            const auto index = position(levels, level.side, level.price);
-            levels.erase(levels.begin() + static_cast<std::ptrdiff_t>(index - 1));
-        }
-        m_free_levels.push_back(resting.level);
-    }
     --m_order_count;
     // A live order's chunk exists, whether the order is in the index or in m_overflow
     auto& chunk = this->chunk(order);
@@ -233,7 +172,7 @@ bool ItchMarket::reduce(std::uint64_t order, Order& resting, std::uint32_t quant
         }
     }
     else {
-        m_overflow.erase(overflow_key(order, level.locate));
+        m_overflow.erase(overflow_key(order, locate));
     }
     return changed;
 }
@@ -304,23 +243,12 @@ ItchMarket::Chunk& ItchMarket::chunk(std::uint64_t order)
     return *m_chunks[order >> (page_bits + chunk_bits)];
 }
 
-std::vector<ItchMarket::Entry>& ItchMarket::side(std::uint16_t locate, Side side)
+BookLevels& ItchMarket::book(std::uint16_t locate)
 {
     if (locate >= m_books.size()) {
         m_books.resize(locate + std::size_t{1});
     }
-    auto& book = m_books[locate];
-    return side == Side::Buy ? book.bids : book.asks;
-}
-
-std::size_t ItchMarket::position(const std::vector<Entry>& levels, Side side, Price price)
-{
-    // Most adds and removals are near the top of the book, which is the end of the vector
-    auto index = levels.size();
-    while (index > 0 && worse(side, price, levels[index - 1].price)) {
-        --index;
-    }
-    return index;
+    return m_books[locate];
 }
 
 } // namespace order_book

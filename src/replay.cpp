@@ -1,6 +1,7 @@
 #include <order_book/feed.hpp>
 #include <order_book/itch.hpp>
 #include <order_book/itch_market.hpp>
+#include <order_book/levels.hpp>
 #include <order_book/order_book.hpp>
 #include <order_book/replay.hpp>
 

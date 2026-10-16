@@ -79,8 +79,9 @@ number is an integer, unique for the day across all stocks and assigned in seque
 books for all its locates share one `ItchMarket`, which finds an order by shifting and masking its
 reference number, without a hash.
 
-Both books keep their levels the same way. Sorted vectors with binary search had lost 12% in the
-CSV book; searching from the best end, with orders holding a handle to a pooled record, did not.
+Both books keep their levels in a `LevelPool` from `levels.hpp`. Sorted vectors with binary search
+had lost 12% in the CSV book; searching from the best end, with orders holding a handle to a pooled
+record, did not.
 
 Decoding is a single dispatch: `visit_itch()` reads the type byte and calls the handler method for
 the message's kind with the decoded fields, so the replay looks at the type once.
