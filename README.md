@@ -91,7 +91,7 @@ replace that names no live order of its stock.
 ### Design
 
 [Architecture](docs/architecture.md) follows a batch through the threads and the books, and gives
-the measurements behind each choice. The library in `include/order_book/` has five parts:
+the measurements behind each choice. The library in `include/order_book/` has six parts:
 
 - [`feed.hpp`](include/order_book/feed.hpp): `parse_line()` turns a line into a `Message` whose
   event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
@@ -99,18 +99,18 @@ the measurements behind each choice. The library in `include/order_book/` has fi
 - [`itch.hpp`](include/order_book/itch.hpp): `visit_itch()` decodes one ITCH message and calls the
   handler method for its kind, so the replay dispatches on the type byte once; `decode_itch()`
   returns the same fields as an `ItchMessage`. It is the only code that knows the ITCH layout.
-- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed. A
-  level is a pooled record with a running total and an order count, and each side is a vector of
-  prices and level handles, worst first, so the best level is the last. Orders live in a
-  `std::vector` that reuses removed positions and hold their level's handle, and an
-  open-addressing index from order ID to position finds any order in one hash lookup.
+- [`levels.hpp`](include/order_book/levels.hpp): the price levels both books keep. A level is a
+  pooled record with a running total and an order count, reached by a handle that each of its
+  orders holds, and each side of a book is a vector of prices and handles, worst first, so the best
+  level is the last one and most adds and removals touch only its end.
+- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed. Orders
+  live in a `std::vector` that reuses removed positions, and an open-addressing index from order ID
+  to position finds any order in one hash lookup.
 - [`itch_market.hpp`](include/order_book/itch_market.hpp): the books of every stock locate for ITCH.
   ITCH reference numbers are unique for the day and assigned in sequence, so orders live in small
   pages of consecutive reference numbers, found through a two-level directory that holds only the
   ranges in use, and the recent orders most messages name share a few pages. Each order is 8 bytes:
-  its remaining shares and the handle of its level, a pooled record that also names the book and
-  side. Each side is a vector of prices and handles, worst first, so the best level is the last one
-  and most adds and removals touch only its end. Each book keeps its own reference numbers, as a CSV
+  its remaining shares and its level's handle. Each book keeps its own reference numbers, as a CSV
   book keeps its order IDs, so an order whose reference number another locate's live order holds
   goes to a hash map keyed by both.
 - [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the

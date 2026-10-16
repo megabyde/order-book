@@ -11,6 +11,7 @@
 
 #include <order_book/feed.hpp>
 #include <order_book/itch.hpp>
+#include <order_book/levels.hpp>
 #include <order_book/order_book.hpp>
 
 namespace order_book {
@@ -62,30 +63,9 @@ public:
     /// Number of live orders in every book
     [[nodiscard]] std::size_t order_count() const { return m_order_count; }
     /// Number of price levels in every book
-    [[nodiscard]] std::size_t level_count() const
-    {
-        return m_levels.size() - 1 - m_free_levels.size();
-    }
+    [[nodiscard]] std::size_t level_count() const { return m_levels.size(); }
 
 private:
-    // A level, with the book and side it belongs to, so that an order need not repeat them
-    struct LevelRecord {
-        Quantity total;
-        Price price;
-        std::uint32_t orders;
-        std::uint16_t locate;
-        Side side;
-    };
-    // An element of a side's levels, worst price first: the price beside the level's handle, so
-    // that finding a price reads no level record
-    struct Entry {
-        Price price;
-        std::uint32_t level;
-    };
-    struct Book {
-        std::vector<Entry> bids;
-        std::vector<Entry> asks;
-    };
     // A resting order in 8 bytes, as ITCH gives shares in 32 bits; level 0 marks an entry of the
     // index that holds none
     struct Order {
@@ -127,16 +107,11 @@ private:
     {
         return (order >> page_bits) & (chunk_size - 1);
     }
-    [[nodiscard]] std::vector<Entry>& side(std::uint16_t locate, Side side);
-    // Where the level at `price` is in `levels`, worst first, or where it would be inserted:
-    // levels[result - 1] is the first from the best that is not better than `price`
-    [[nodiscard]] static std::size_t position(const std::vector<Entry>& levels, Side side,
-                                              Price price);
+    // The levels of `locate`'s book, made if it has none yet
+    [[nodiscard]] BookLevels& book(std::uint16_t locate);
 
-    std::vector<Book> m_books;
-    // Handle 0 is never used, so that 0 can mean none
-    std::vector<LevelRecord> m_levels = std::vector<LevelRecord>(1);
-    std::vector<std::uint32_t> m_free_levels;
+    std::vector<BookLevels> m_books;
+    LevelPool m_levels;
     // Chunks by the reference numbers' bits above both a page's and a chunk's; never freed
     std::vector<std::unique_ptr<Chunk>> m_chunks;
     // Emptied pages, kept for reuse
