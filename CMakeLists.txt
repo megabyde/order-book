@@ -150,8 +150,8 @@ endfunction()
 # of recompiling sources. Include dirs and the language standard are PUBLIC so both consumers
 # inherit them.
 add_library(
-    order_book_lib STATIC src/feed.cpp src/itch.cpp src/itch_market.cpp src/order_book.cpp
-                          src/replay.cpp
+    order_book_lib STATIC src/feed.cpp src/itch.cpp src/itch_market.cpp src/levels.cpp
+                          src/order_book.cpp src/replay.cpp
 )
 target_include_directories(order_book_lib PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_compile_features(order_book_lib PUBLIC cxx_std_23)

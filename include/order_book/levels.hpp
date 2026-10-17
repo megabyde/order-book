@@ -80,6 +80,10 @@ public:
     [[nodiscard]] std::size_t size() const { return m_records.size() - 1 - m_free.size(); }
 
 private:
+    // Make a level for `order` and insert it into `levels` at `index`. Kept out of line, so that
+    // add() stays small enough to inline: most adds join a level that exists.
+    Added create(std::vector<LevelEntry>& levels, std::size_t index, const AddOrder& order,
+                 std::uint16_t locate);
     // Whether `lhs` is a worse price than `rhs` on `side`: lower for bids, higher for asks
     [[nodiscard]] static bool worse(Side side, Price lhs, Price rhs)
     {
@@ -97,33 +101,16 @@ private:
 inline LevelPool::Added LevelPool::add(BookLevels& book, const AddOrder& order,
                                        std::uint16_t locate)
 {
-    const auto [side, price, shares] = order;
-    auto& levels = side == Side::Buy ? book.bids : book.asks;
-    auto index = position(levels, side, price);
-    std::uint32_t handle = 0;
-    const auto created = index == 0 || levels[index - 1].price != price;
-    if (created) {
-        if (m_free.empty()) {
-            handle = static_cast<std::uint32_t>(m_records.size());
-            m_records.emplace_back();
-        }
-        else {
-            handle = m_free.back();
-            m_free.pop_back();
-        }
-        m_records[handle] =
-            LevelRecord{.total = 0, .price = price, .orders = 0, .locate = locate, .side = side};
-        levels.insert(levels.begin() + static_cast<std::ptrdiff_t>(index),
-                      LevelEntry{.price = price, .level = handle});
-        ++index;
+    auto& levels = order.side == Side::Buy ? book.bids : book.asks;
+    const auto index = position(levels, order.side, order.price);
+    if (index == 0 || levels[index - 1].price != order.price) {
+        return create(levels, index, order, locate);
     }
-    else {
-        handle = levels[index - 1].level;
-    }
+    const auto handle = levels[index - 1].level;
     auto& level = m_records[handle];
-    level.total += shares;
+    level.total += order.shares;
     ++level.orders;
-    return {.level = handle, .changed = index == levels.size() && (created || shares != 0)};
+    return {.level = handle, .changed = index == levels.size() && order.shares != 0};
 }
 
 // A handle and a quantity, which the check sees as swappable
