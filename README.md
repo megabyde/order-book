@@ -104,8 +104,8 @@ the measurements behind each choice. The library in `include/order_book/` has si
   orders holds, and each side of a book is a vector of prices and handles, worst first, so the best
   level is the last one and most adds and removals touch only its end.
 - [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed. Orders
-  live in a `std::vector` that reuses removed positions, and an open-addressing index from order ID
-  to position finds any order in one hash lookup.
+  live in an [unordered_dense](https://github.com/martinus/unordered_dense) map from order ID, which
+  keeps them packed in one vector and finds any order in one hash lookup.
 - [`itch_market.hpp`](include/order_book/itch_market.hpp): the books of every stock locate for ITCH.
   ITCH reference numbers are unique for the day and assigned in sequence, so orders live in small
   pages of consecutive reference numbers, found through a two-level directory that holds only the
@@ -124,6 +124,8 @@ This repository uses:
 
 - [CMake](https://cmake.org) configure, build, and test presets as the public build interface
 - [Conan 2](https://conan.io) for dependency management
+- [unordered_dense](https://github.com/martinus/unordered_dense) via Conan for the CSV book's hash
+  maps
 - [GoogleTest](https://github.com/google/googletest) and
   [Google Benchmark](https://github.com/google/benchmark) via Conan
 - [Doxygen](https://www.doxygen.nl) for generated API documentation

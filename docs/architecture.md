@@ -61,10 +61,21 @@ add 3.3 s of CPU without making the run shorter.
 a pooled record with its total, price, order count, and side, and each side is a vector of prices and
 level handles, worst first, so the best level is the last element and a change to it is a change to
 the BBO. Finding a price scans from the best end, where most adds and removals happen. Orders live
-in a `std::vector` that reuses removed positions, and each holds its remaining quantity and its
-level's handle, so an execution or delete reaches the level without a search. An open-addressing
-index with linear probing, kept at most half full, maps an order ID to its position; each slot also
-keeps the low bits of the ID's hash, which skips most string comparisons.
+in an `ankerl::unordered_dense::map` from order ID to the order's remaining quantity and its level's
+handle, so an execution or delete reaches the level without a search. The map keeps its entries in
+one vector, moving the last into the place of an erased one, and indexes them with Robin Hood
+hashing up to 80% full; the books of a worker's tickers live in the same kind of map.
+
+It replaced an open-addressing index with linear probing, kept at most half full, over a vector of
+orders that reused removed positions. On one thread, the 113.6M-event synthetic feed replayed in
+22.1–30.5 s instead of 27.7–35.5 s, 14–26% faster in each of six interleaved pairs, and the deep
+feed in 510–547 ms instead of 572–628 ms. With all threads, the application took 4.9–5.5 s instead
+of 5.4–6.2 s and peaked at 155–158 MiB instead of 170–173. Books small enough to stay in cache pay
+for it: with 64 orders, `BM_AddDelete` runs 35–39% slower and `BM_ExecuteFront` 26–31%, and the
+real one-ticker capture replays in 31.0–31.9 ms instead of 29.9–30.3. On a 10M-event feed over 8000
+tickers, the map of books alone gave about 6.5% of the 13–17% there, and packing the old vector of
+orders recovered 3%; the rest is the table, which linear probing did not match: filled to 3/4, it
+replayed the capture 23% slower.
 
 The levels were a `std::map` per side until the ITCH market's structure measured faster here too.
 On one thread, the 113.6M-event synthetic feed replayed in 27.6–30.4 s instead of 31.0–31.8 s and
