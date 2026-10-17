@@ -1,6 +1,7 @@
 {
     "version": "0.5",
     "requires": [
+        "unordered_dense/5.2.0#a29f3799658278bf5d32884f28407c1b%1790691525.695",
         "gtest/1.17.0#5224b3b3ff3b4ce1133cbdd27d53ee7d%1755784855.585",
         "benchmark/1.9.5#b885dc73ad67b40a55d45684d1c88ad1%1774363287.434"
     ],

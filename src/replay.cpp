@@ -29,9 +29,10 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <ankerl/unordered_dense.h>
 
 namespace order_book {
 
@@ -323,7 +324,7 @@ private:
         return true;
     }
 
-    std::unordered_map<std::string, OrderBook, StringHash, std::equal_to<>> m_books;
+    ankerl::unordered_dense::map<std::string, OrderBook, StringHash, std::equal_to<>> m_books;
 };
 
 // Keeps the books of the stock locates whose messages it is given

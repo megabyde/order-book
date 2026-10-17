@@ -154,6 +154,8 @@ add_library(
                           src/order_book.cpp src/replay.cpp
 )
 target_include_directories(order_book_lib PUBLIC ${PROJECT_SOURCE_DIR}/include)
+find_package(unordered_dense CONFIG REQUIRED)
+target_link_libraries(order_book_lib PUBLIC unordered_dense::unordered_dense)
 target_compile_features(order_book_lib PUBLIC cxx_std_23)
 enable_project_options(order_book_lib)
 

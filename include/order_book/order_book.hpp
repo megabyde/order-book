@@ -9,6 +9,8 @@
 #include <string_view>
 #include <vector>
 
+#include <ankerl/unordered_dense.h>
+
 #include <order_book/feed.hpp>
 #include <order_book/levels.hpp>
 
@@ -17,10 +19,11 @@ namespace order_book {
 /// Hash that lets string-keyed unordered containers look up a std::string_view without a copy
 struct StringHash {
     using is_transparent = void; ///< Enables heterogeneous lookup
+    using is_avalanching = void; ///< Tells unordered_dense that the hash needs no extra mixing
     /// Hash of the characters, equal for a std::string and a view of it
-    [[nodiscard]] std::size_t operator()(std::string_view text) const noexcept
+    [[nodiscard]] std::uint64_t operator()(std::string_view text) const noexcept
     {
-        return std::hash<std::string_view>{}(text);
+        return ankerl::unordered_dense::hash<std::string_view>{}(text);
     }
 };
 

@@ -55,6 +55,9 @@ class OrderBookConan(ConanFile):
         self.folders.build_folder_vars = ["settings.build_type", "settings.compiler.sanitizer"]
         cmake_layout(self, generator=self._cmake_generator())
 
+    def requirements(self):
+        self.requires("unordered_dense/5.2.0")
+
     def build_requirements(self):
         # Declare CMake as an explicit build tool. The range matches the project floor and is
         # satisfied from the system CMake via [platform_tool_requires] in profiles/default (so
