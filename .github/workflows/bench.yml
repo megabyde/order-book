@@ -10,8 +10,9 @@ on:
     paths: [.github/workflows/bench.yml, scripts/bench_summary.py]
   workflow_dispatch:
 
+# Every commit on main keeps its run; a newer push to a pull request cancels the older one
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 permissions:
