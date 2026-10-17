@@ -1,0 +1,75 @@
+name: A/B
+
+# Experiment branches only: builds origin/main and HEAD on the same runner and runs their
+# benchmarks interleaved, so the comparison does not depend on which machine a run lands on
+on:
+  push:
+    branches: ["perf/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    name: ab / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Load CI env
+        run: |
+          cat .github/ci.env >> "$GITHUB_ENV"
+          echo "PYTHON=$([ "$RUNNER_OS" = Windows ] && echo python || echo python3)" >> "$GITHUB_ENV"
+      - name: Install GCC 14
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-14 g++-14
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+      - name: Build both
+        run: |
+          git fetch --depth=1 origin main
+          git worktree add base FETCH_HEAD
+          for tree in base .; do
+            (cd "$tree" &&
+              conan install . -pr=profiles/default -s="build_type=Release" --build=missing \
+                --lockfile=conan.lock &&
+              cmake --preset release &&
+              cmake --build --preset release --target order_book_bench)
+          done
+      - name: Generate the feeds
+        run: |
+          mkdir -p build/bench
+          "$PYTHON" scripts/gen_feed.py --events 1000000 --tickers 8 --seed 1 -o build/bench/feed.csv
+          "$PYTHON" scripts/gen_feed.py --events 4000000 --tickers 200 --depth 4000 --seed 2 \
+            -o build/bench/deep.csv
+          "$PYTHON" scripts/csv_to_itch.py build/bench/deep.csv -o build/bench/deep.itch
+      - name: Run interleaved
+        run: |
+          separator=$([ "$RUNNER_OS" = Windows ] && echo ';' || echo ':')
+          bin=build/release/order_book_bench
+          [ "$RUNNER_OS" = Windows ] && bin=build/release/Release/order_book_bench.exe
+          export ORDER_BOOK_REPLAY_CSV="build/bench/feed.csv${separator}build/bench/deep.csv"
+          export ORDER_BOOK_REPLAY_ITCH=build/bench/deep.itch
+          mkdir -p ab
+          for round in 1 2 3 4; do
+            for side in base new; do
+              tree=.
+              [ "$side" = base ] && tree=base
+              "$tree/$bin" --benchmark_filter='BM_AddDelete|BM_ExecuteFront|BM_ItchEngine|BM_ParseLine|threads:(1|8)/' \
+                --benchmark_out="ab/$side-$round.json" --benchmark_out_format=json >/dev/null
+            done
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ab-${{ matrix.os }}
+          path: ab
