@@ -56,7 +56,7 @@ class OrderBookConan(ConanFile):
         cmake_layout(self, generator=self._cmake_generator())
 
     def requirements(self):
-        self.requires("unordered_dense/5.2.0")
+        self.requires("unordered_dense/[>=5.2.0 <6]")
 
     def build_requirements(self):
         # Declare CMake as an explicit build tool. The range matches the project floor and is
@@ -66,9 +66,9 @@ class OrderBookConan(ConanFile):
         # environment, not pinned here.
         self.tool_requires("cmake/[>=3.29]")
         if self.options.with_tests:
-            self.test_requires("gtest/1.17.0")
+            self.test_requires("gtest/[>=1.17.0 <2]")
         if self.options.with_benchmarks:
-            self.test_requires("benchmark/1.9.5")
+            self.test_requires("benchmark/[>=1.9.5 <2]")
 
     def generate(self):
         # CMakeConfigDeps generates CMake CONFIG-mode find_package files under the build

@@ -155,17 +155,23 @@ interface for developers or CI.
 
 ## Dependency lock file
 
-Outcome: updated dependency pins and a matching `conan.lock` for reproducible builds.
+Outcome: a `conan.lock` with the newest versions `conanfile.py` allows, for reproducible builds.
+
+`conanfile.py` gives each dependency a version range, and `conan.lock` pins the version and recipe
+revision every build installs. Conan reads the lock beside the recipe on its own, so a build or a
+`conan lock create` keeps each locked version its range still allows and resolves only the rest.
 
 Update dependencies in this order:
 
-1. Edit version pins in `conanfile.py`.
-2. Regenerate the lock file with `make lock`.
+1. If the code needs a newer version than a range allows, raise its lower bound in `conanfile.py`.
+2. Regenerate the lock file with `make lock`. It ignores the current lock and resolves every range
+   to the newest version on the remote.
 3. Run the appropriate `make` target to verify.
-4. Commit both `conanfile.py` and `conan.lock`.
+4. Commit `conan.lock`, and `conanfile.py` if a range changed.
 
-The update is complete when the selected build and test workflow passes and both files contain the
-intended dependency change.
+The update is complete when the selected build and test workflow passes and `conan.lock` holds the
+intended versions. `make lock-check`, which CI runs, fails when the lock no longer satisfies
+`conanfile.py` or keeps entries the graph does not use; a new upstream release does not fail it.
 
 ## Formatting and linting
 
