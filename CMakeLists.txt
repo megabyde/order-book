@@ -413,13 +413,23 @@ if(BUILD_FUZZERS)
     )
 
     # Each replay fuzzer runs its seeds once, and the market fuzzer a fixed number of generated
-    # inputs, so the preset's tests are deterministic. make fuzz-run does the open-ended fuzzing.
+    # inputs, so the preset's tests are deterministic. make fuzz-run does the open-ended fuzzing. A
+    # failing input goes to the same directory as fuzz-run's, which libFuzzer does not create.
     enable_testing()
-    add_test(NAME Fuzz.CsvReplaySeeds COMMAND csv_replay_fuzz -runs=0
-                                              ${PROJECT_SOURCE_DIR}/tests/data
+    set(FUZZ_CRASHES ${PROJECT_BINARY_DIR}/crashes)
+    file(MAKE_DIRECTORY ${FUZZ_CRASHES})
+    add_test(NAME Fuzz.CsvReplaySeeds
+             COMMAND csv_replay_fuzz -artifact_prefix=${FUZZ_CRASHES}/csv_replay_fuzz- -runs=0
+                     ${PROJECT_SOURCE_DIR}/tests/data
     )
-    add_test(NAME Fuzz.ItchReplaySeeds COMMAND itch_replay_fuzz -runs=0 ${FUZZ_SEEDS}/itch)
-    add_test(NAME Fuzz.ItchMarketRuns COMMAND itch_market_fuzz -runs=50000 -seed=1)
+    add_test(NAME Fuzz.ItchReplaySeeds
+             COMMAND itch_replay_fuzz -artifact_prefix=${FUZZ_CRASHES}/itch_replay_fuzz- -runs=0
+                     ${FUZZ_SEEDS}/itch
+    )
+    add_test(NAME Fuzz.ItchMarketRuns
+             COMMAND itch_market_fuzz -artifact_prefix=${FUZZ_CRASHES}/itch_market_fuzz-
+                     -runs=50000 -seed=1
+    )
 endif()
 
 # --- benchmarks ------------------------------------------------------------
