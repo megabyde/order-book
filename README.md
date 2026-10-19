@@ -85,7 +85,9 @@ count or an unknown `--format` prints the reason to stderr and exits with 2.
 Any other failure prints `error: <reason>` and exits with 1, after the output before it: output that
 cannot be written, down to the final flush, so status 0 means every line reached stdout; memory or
 threads that run out; and a read error, which libstdc++ reports. Built with libc++ or MSVC's library,
-the file stream reports a read error as the end of the file, and the replay ends there.
+the file stream reports a read error as the end of the file, and the replay ends there. On POSIX,
+output into a pipe whose reader has exited ends the program with `SIGPIPE` instead, as it ends `cat`
+or `grep`.
 
 ITCH errors name the message instead, `error: message N: <reason>`, counting messages from 1. A
 message fails on an unknown type, a size other than the specification's for a type the book uses, a
