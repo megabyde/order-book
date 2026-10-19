@@ -116,12 +116,15 @@ CSV ones:
 ORDER_BOOK_REPLAY_ITCH=/path/to/12302019.NASDAQ_ITCH50 make bench
 ```
 
-Each ITCH file also gets `BM_ItchEngine/<path>`, which decodes every message and applies it to one
-`ItchMarket` on one thread, from memory and without output, with the same prefetching as the
-replay's workers. That is the region other ITCH books time in their own benchmarks, so its
-`per_message` counter is the per-core figure to compare with them. Each iteration starts from an
-empty market, and a full day takes about 15 seconds, so give it a few repetitions rather than the
-default 10:
+Each ITCH file also gets `BM_ItchEngine/<path>`, which applies every message to one `ItchMarket` on
+one thread, from memory, the way the replay's workers do: the same prefetching, `visit_itch()`
+calling the market's method for the message's kind, and the BBO read after each change. It leaves
+out what the replay adds around that: reading the file, picking out a worker's messages, formatting
+lines, tracking stock symbols, and merging the output. That is the region other ITCH books time in
+their own benchmarks, so its `per_message` counter is the per-core figure to compare with them, an
+average over the day rather than a latency. Each iteration starts from an empty market, made and
+destroyed outside the timing, and a full day takes about 15 seconds, so give it a few repetitions
+rather than the default 10:
 
 ```bash
 ORDER_BOOK_REPLAY_ITCH=/path/to/12302019.NASDAQ_ITCH50 \

@@ -158,7 +158,11 @@ the 2019-12-30 ITCH day's output byte-identical.
 
 The two decode-and-apply rows come from different sessions: #17's review fixes added about 4% of
 instructions and no measurable cycles, and most of the gap between 54 and 61 ns was the machine.
-`BM_ItchEngine` times the same region today.
+
+`BM_ItchEngine` has since moved to the workers' path: `visit_itch()` instead of decoding into a
+message and applying it, and a BBO read after each change. In four interleaved rounds on the ITCH
+day, the dispatch alone stayed within 0.7 ns a message of the old loop either way, and the BBO read
+added 0.3–3.2 ns, so the benchmark reports 53.2–55.7 ns where the old loop reported 50.5–54.8.
 
 For CSV, v0.1.0 replayed a synthetic 113.6M-event feed over 8000 tickers in 4.7 s with all threads
 and 35 s with one worker, after block input and output (#8), a slab of orders with an

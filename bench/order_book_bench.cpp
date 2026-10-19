@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <expected>
 #include <format>
 #include <fstream>
 #include <ios>
@@ -168,8 +169,62 @@ std::string_view message_at(std::string_view feed, std::size_t offset)
     return feed.substr(offset + 2, next_message(feed, offset) - offset - 2);
 }
 
-// Decode and apply every message of `feed` to `market` on this thread, starting the loads of later
-// messages as replay()'s workers do. Returns why the first message that fails does, if one does.
+// Applies each message as replay()'s workers do: visit_itch() calls the ItchMarket method for its
+// kind, and a change of the BBO reads it, but neither formats a line nor tracks the stock symbol.
+// Records why a message fails.
+class EngineHandler {
+public:
+    explicit EngineHandler(order_book::ItchMarket& market) : m_market(market) {}
+
+    bool add(const order_book::ItchMessage& message)
+    {
+        return applied(message, m_market.add(message));
+    }
+    bool execute(const order_book::ItchMessage& message)
+    {
+        return applied(message, m_market.execute(message));
+    }
+    bool remove(const order_book::ItchMessage& message)
+    {
+        return applied(message, m_market.remove(message));
+    }
+    bool replace(const order_book::ItchMessage& message)
+    {
+        return applied(message, m_market.replace(message));
+    }
+    static bool trade(const order_book::ItchMessage& /*message*/) { return true; }
+    static bool skipped() { return true; }
+    bool error(const order_book::ItchError& error)
+    {
+        m_failure = describe(error);
+        return false;
+    }
+
+    [[nodiscard]] const std::string& failure() const { return m_failure; }
+
+private:
+    bool applied(const order_book::ItchMessage& message,
+                 const std::expected<bool, order_book::BookError>& result)
+    {
+        if (!result) {
+            const auto duplicate = result.error() == order_book::BookError::DuplicateOrder;
+            m_failure = std::format("{} order", duplicate ? "duplicate" : "unknown");
+            return false;
+        }
+        if (*result) {
+            auto bbo = m_market.bbo(message.locate);
+            benchmark::DoNotOptimize(bbo);
+        }
+        return true;
+    }
+
+    order_book::ItchMarket& m_market;
+    std::string m_failure;
+};
+
+// Apply every message of `feed` to `market` on this thread through EngineHandler, starting the
+// loads of later messages as replay()'s workers do. Returns why the first message that fails does,
+// if one does.
 std::optional<std::string> apply_itch(std::string_view feed, order_book::ItchMarket& market)
 {
     constexpr auto distance = order_book::ItchMarket::prefetch_distance;
@@ -179,6 +234,7 @@ std::optional<std::string> apply_itch(std::string_view feed, order_book::ItchMar
         ahead = next_message(feed, ahead);
         half = skipped < distance / 2 ? next_message(feed, half) : half;
     }
+    EngineHandler handler(market);
     std::size_t number = 1;
     for (std::size_t offset = 0; offset < feed.size(); offset = next_message(feed, offset)) {
         if (ahead < feed.size()) {
@@ -191,25 +247,17 @@ std::optional<std::string> apply_itch(std::string_view feed, order_book::ItchMar
             market.prefetch_levels(peeked.order, peeked.locate);
             half = next_message(feed, half);
         }
-        const auto message = order_book::decode_itch(message_at(feed, offset));
-        if (!message) {
-            return std::format("message {}: {}", number, describe(message.error()));
+        if (!order_book::visit_itch(message_at(feed, offset), handler)) {
+            return std::format("message {}: {}", number, handler.failure());
         }
-        const auto applied = market.apply(*message);
-        if (!applied) {
-            const auto duplicate = applied.error() == order_book::BookError::DuplicateOrder;
-            return std::format("message {}: {} order", number, duplicate ? "duplicate" : "unknown");
-        }
-        auto changed = *applied;
-        benchmark::DoNotOptimize(changed);
         ++number;
     }
     return std::nullopt;
 }
 
 // Decodes and applies the ITCH feed at `path` to one ItchMarket on one thread, from memory and
-// without output: the region that per-core comparisons with other ITCH books time. Each iteration
-// starts from an empty market, made and destroyed outside the timing.
+// without formatting output: the region that per-core comparisons with other ITCH books time. Each
+// iteration starts from an empty market, made and destroyed outside the timing.
 void BM_ItchEngine(benchmark::State& state, const std::string& path)
 {
     const auto feed = read_feed(state, path);
