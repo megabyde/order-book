@@ -58,8 +58,9 @@ test gave p = 0.011. Median process CPU time fell from 8.514 s to 6.655 s, and v
 switches from 432,346 to 85,490. Profiling found futex contention before the change.
 Parsing, book updates, and output merging remain work that this change does not reduce.
 
-These measurements used GCC 15.2.0, `-O3`, LTO, hardening, and the default 32 workers on both
-builds. The input was eight copies of the generated 4M-event deep feed, with only the first CSV
+These measurements used GCC 15.2.0, `-O3`, hardening, and the default 32 workers on both
+builds. LTO was requested but disabled by the existing GCC/lld compatibility probe on both builds.
+The input was eight copies of the generated 4M-event deep feed, with only the first CSV
 header retained. Each copy ends with empty books, so concatenation preserves valid order lifetimes.
 The CLI read warm files and wrote to `/dev/null`; separate untimed runs verified identical output
 hashes and 8,497,112 output lines. Desktop processes remained active during measurement.
@@ -67,6 +68,11 @@ ITCH encoded from the same feed also produced identical output and fewer context
 elapsed-time difference was inconclusive. A separate `-march=native` trial showed no consistent
 gain, so the release build retains generic x86-64 code generation. Synthetic feeds do not establish
 performance on a real trading-day capture.
+
+A subsequent source-only [Linux x86 hillclimb](performance-x86.md) compared against this
+post-wakeup baseline. Eighteen attempts retained the eight-worker CLI cap, one-stage ITCH
+prefetch, and 256-order ITCH pages. Combined CSV/ITCH elapsed time fell 21.9%; the 25% target
+was not reached. The report includes raw timings, guard workloads, and the page-size memory cost.
 
 A record that fails stops its worker, whose books are unusable after a failed apply. The batch's
 earliest failure across all workers ends the replay: the merge writes the lines before it, then
@@ -133,8 +139,8 @@ the message's kind with the decoded fields, so the replay looks at the type once
 Orders live in an index of pages by reference number. A page holds 256 consecutive reference
 numbers on Linux x86-64 and 128 elsewhere. Each order takes 8 bytes for its remaining shares and
 the handle of its level. A two-level directory finds the page, made only for the ranges in use,
-so one reference number near
-2^32 costs one directory chunk rather than a table in every worker. Nasdaq assigns reference numbers
+so one reference number near 2^32 costs one directory chunk rather than a table in every worker.
+Nasdaq assigns reference numbers
 in sequence within each of several ranges at once, so the recent orders most messages name sit in a
 few pages that stay in cache.
 

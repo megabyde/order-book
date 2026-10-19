@@ -190,7 +190,9 @@ timings are meaningless; take numbers from `make bench` on an idle machine.
 `scripts/hillclimb.py` compares the application CLI on Linux with Python 3.11+ and no extra Python
 packages. Generate synthetic CSV inputs with `scripts/gen_feed.py` and encode matching ITCH inputs
 with `scripts/csv_to_itch.py`. Check baseline outputs against `scripts/reference_bbo.py` before
-freezing an experiment. Keep release hardening, LTO, and warnings-as-errors enabled.
+freezing an experiment. Keep release hardening, LTO, and warnings-as-errors options enabled.
+Check configure output and actual compile/link commands too: the toolchain probe can disable LTO
+even when its option is enabled. Record that outcome and keep it fixed across builds.
 
 ```bash
 python3 scripts/hillclimb.py freeze --baseline build/release/order_book \

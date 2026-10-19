@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Cheap subprocess checks for the hillclimb measurement boundary."""
 
 from __future__ import annotations
 
