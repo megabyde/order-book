@@ -51,6 +51,13 @@ earliest failure across all workers ends the replay: the merge writes the lines 
 `replay()` throws with the record's number, so the output and the error are the same as with one
 thread.
 
+The streams can fail too. The calling thread checks the output stream after each batch and after
+the flush that ends the replay, and throws if it failed, so a replay that returns has delivered
+every line to the stream. A read that throws ends the input at the last whole record before it: the
+batches read so far are applied and written, and the exception is rethrown after them unless one of
+their records failed first. The read runs inside `std::string::resize_and_overwrite()`, which must
+not see an exception, so the reader keeps the exception until the call returns.
+
 The default is one worker per hardware thread. The ITCH day is CPU-bound from 8 workers on an M1
 Max: total CPU time grows from 28.4 s on one thread to 37.7 s on eight, and the two efficiency cores
 add 3.3 s of CPU without making the run shorter.
