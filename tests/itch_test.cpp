@@ -17,6 +17,7 @@
 #include <expected>
 #include <format>
 #include <initializer_list>
+#include <limits>
 #include <map>
 #include <optional>
 #include <random>
@@ -167,8 +168,6 @@ TEST_P(ItchMalformedTest, RejectsWithMessage)
     EXPECT_EQ(describe(message.error()), GetParam().error);
 }
 
-constexpr auto first_out_of_range = order_book::max_itch_order;
-
 INSTANTIATE_TEST_SUITE_P(
     Messages, ItchMalformedTest,
     Values(MalformedCase{"Empty", "", "empty message"},
@@ -177,18 +176,22 @@ INSTANTIATE_TEST_SUITE_P(
                          "'A' message has 35 bytes, expected 36"},
            MalformedCase{"LongDelete", itch::remove(1, 2, 3) + 'x',
                          "'D' message has 20 bytes, expected 19"},
-           MalformedCase{"BadSide", itch::add(1, 2, 3, 'X', 4, "A", 5), "invalid side 0x58"},
-           MalformedCase{"OrderOutOfRange", itch::add(1, 2, first_out_of_range, 'B', 4, "A", 5),
-                         "order reference out of range: 4294967296"},
-           MalformedCase{"ReplacementOutOfRange", itch::replace(1, 2, 3, first_out_of_range, 4, 5),
-                         "order reference out of range: 4294967296"}),
+           MalformedCase{"BadSide", itch::add(1, 2, 3, 'X', 4, "A", 5), "invalid side 0x58"}),
     [](const TestParamInfo<MalformedCase>& info) { return std::string(info.param.name); });
 
-TEST(ItchTest, AcceptsTheLastReferenceInRange)
+// The first reference number the market keeps outside its index, and the last of all
+constexpr auto first_unindexed = std::uint64_t{1} << 32U;
+constexpr auto last_reference = std::numeric_limits<std::uint64_t>::max();
+
+TEST(ItchTest, DecodesReferencesOfAll64Bits)
 {
-    const auto message = decode_itch(itch::remove(1, 2, first_out_of_range - 1));
-    ASSERT_TRUE(message) << describe(message.error());
-    EXPECT_EQ(message->order, first_out_of_range - 1);
+    const auto removed = decode_itch(itch::remove(1, 2, last_reference));
+    ASSERT_TRUE(removed) << describe(removed.error());
+    EXPECT_EQ(removed->order, last_reference);
+    const auto replaced = decode_itch(itch::replace(1, 2, first_unindexed, last_reference, 4, 5));
+    ASSERT_TRUE(replaced) << describe(replaced.error());
+    EXPECT_EQ(replaced->order, first_unindexed);
+    EXPECT_EQ(replaced->replacement, last_reference);
 }
 
 TEST(ItchTest, PeeksTheLocateAndOrderReference)
@@ -199,8 +202,8 @@ TEST(ItchTest, PeeksTheLocateAndOrderReference)
               (ItchPeek{.order = 42, .locate = 1}));
     EXPECT_EQ(peek_itch(itch::replace(0xbeef, 2, 7, 8, 100, 10)),
               (ItchPeek{.order = 7, .locate = 0xbeef}));
-    EXPECT_EQ(peek_itch(itch::remove(3, 2, first_out_of_range - 1)),
-              (ItchPeek{.order = first_out_of_range - 1, .locate = 3}));
+    EXPECT_EQ(peek_itch(itch::remove(3, 2, last_reference)),
+              (ItchPeek{.order = last_reference, .locate = 3}));
 
     // Too short to hold a reference, cut off inside it, or of a type the book does not use
     EXPECT_EQ(peek_itch(""), ItchPeek{});
@@ -453,10 +456,10 @@ TEST(ItchMarketTest, ReusesEmptiedPagesAndSlots)
     }
 }
 
-// Both sides of a 128-reference page boundary and of a 65,536-reference chunk boundary, and the
-// last reference
-constexpr std::array<std::uint64_t, 6> spread_orders{
-    1, 127, 128, 65'535, 65'536, first_out_of_range - 1,
+// Both sides of a 128-reference page boundary, of a 65,536-reference chunk boundary, and of the
+// end of the index, and the last reference
+constexpr std::array<std::uint64_t, 8> spread_orders{
+    1, 127, 128, 65'535, 65'536, first_unindexed - 1, first_unindexed, last_reference,
 };
 
 // Sell spread_orders[i] at 1000 + i, 10 * (i + 1) shares, so the orders' asks rise in their order
@@ -496,6 +499,70 @@ TEST(ItchMarketTest, IndexesTheWholeReferenceRange)
     EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, std::uint64_t{1} << 20U)), unknown);
     EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 2, spread_orders.back())), unknown);
     EXPECT_TRUE(delete_spread(market));
+    EXPECT_EQ(market.order_count(), 0U);
+}
+
+// Orders first_unindexed and last_reference in locate 1 and last_reference in locate 2, with none
+// below first_unindexed, so the index has no chunk at all
+ItchMarket unindexed_orders()
+{
+    ItchMarket market;
+    market.prefetch(last_reference, 1);
+    market.prefetch_levels(last_reference, 1);
+    EXPECT_EQ(market.apply(add_message(1, first_unindexed, Side::Buy, 1000, 100)), true);
+    EXPECT_EQ(market.apply(add_message(1, last_reference, Side::Sell, 1010, 50)), true);
+    EXPECT_EQ(market.apply(add_message(2, last_reference, Side::Buy, 990, 7)), true);
+    market.prefetch(last_reference, 1);
+    market.prefetch_levels(last_reference, 1);
+    return market;
+}
+
+TEST(ItchMarketTest, KeepsOrdersBeyondTheIndex)
+{
+    auto market = unindexed_orders();
+    EXPECT_EQ(market.apply(add_message(1, last_reference, Side::Buy, 900, 5)),
+              std::unexpected(BookError::DuplicateOrder));
+
+    // A partial execution keeps the order and a full one removes it
+    EXPECT_EQ(market.apply(order_message(ItchKind::Execute, 1, first_unindexed, 40)), true);
+    EXPECT_EQ(market.bbo(1), bbo(Level{1000, 60}, Level{1010, 50}));
+    EXPECT_EQ(market.apply(order_message(ItchKind::Execute, 1, first_unindexed, 60)), true);
+    EXPECT_EQ(market.bbo(1), bbo({}, Level{1010, 50}));
+
+    EXPECT_TRUE(delete_best(market, {{1, last_reference}, {2, last_reference}}));
+    EXPECT_EQ(market.order_count(), 0U);
+    EXPECT_EQ(market.level_count(), 0U);
+    // Nothing is left behind
+    EXPECT_EQ(market.apply(add_message(1, last_reference, Side::Buy, 1000, 1)), true);
+    EXPECT_EQ(market.apply(add_message(2, first_unindexed, Side::Buy, 1000, 1)), true);
+}
+
+// Whether a delete of each order of `orders` in `locate` fails as unknown
+testing::AssertionResult none_live(ItchMarket& market, std::uint16_t locate,
+                                   std::initializer_list<std::uint64_t> orders)
+{
+    for (const auto order : orders) {
+        if (market.apply(order_message(ItchKind::Delete, locate, order)) !=
+            std::unexpected(BookError::UnknownOrder)) {
+            return testing::AssertionFailure() << "order " << order << " is live";
+        }
+    }
+    return testing::AssertionSuccess();
+}
+
+TEST(ItchMarketTest, ReplacesOrdersIntoTheIndexAndOut)
+{
+    // From the last reference number into the index, to its last reference number, and out again
+    auto market = unindexed_orders();
+    EXPECT_EQ(market.apply(replace_message(1, last_reference, 5, 50, 1005)), true);
+    EXPECT_EQ(market.apply(replace_message(1, 5, first_unindexed - 1, 20, 1003)), true);
+    EXPECT_EQ(market.apply(replace_message(1, first_unindexed - 1, first_unindexed + 1, 10, 1001)),
+              true);
+    EXPECT_EQ(market.bbo(1), bbo(Level{1000, 100}, Level{1001, 10}));
+    EXPECT_EQ(market.bbo(2), bbo(Level{990, 7}, {}));
+    EXPECT_TRUE(none_live(market, 1, {last_reference, 5, first_unindexed - 1}));
+    EXPECT_TRUE(
+        delete_best(market, {{1, first_unindexed + 1}, {1, first_unindexed}, {2, last_reference}}));
     EXPECT_EQ(market.order_count(), 0U);
 }
 
@@ -633,10 +700,19 @@ private:
                 return order;
             }
         }
-        // Skip some reference numbers, so the orders spread over pages
-        const auto order = m_next;
-        m_next += 1 + (m_random() % 3);
-        return order;
+        // One new reference number in eight counts up across the end of the index, and one counts
+        // down from the last; the rest skip some, so the orders spread over pages
+        switch (m_random() % 8) {
+        case 0:
+            return m_beyond++;
+        case 1:
+            return m_last--;
+        default: {
+            const auto order = m_next;
+            m_next += 1 + (m_random() % 3);
+            return order;
+        }
+        }
     }
 
     testing::AssertionResult check(std::uint16_t locate, const order_book::Bbo& before,
@@ -658,6 +734,8 @@ private:
     MarketModel m_model;
     std::vector<std::pair<std::uint16_t, std::uint64_t>> m_live;
     std::uint64_t m_next = 1;
+    std::uint64_t m_beyond = first_unindexed - 100;
+    std::uint64_t m_last = last_reference;
 };
 
 TEST(ItchMarketTest, MatchesModelUnderChurn)

@@ -91,9 +91,9 @@ or `grep`.
 
 ITCH errors name the message instead, `error: message N: <reason>`, counting messages from 1. A
 message fails on an unknown type, a size other than the specification's for a type the book uses, a
-side other than `B` or `S`, an order reference of 2^32 or above, a truncated last message, an add or
-a replacement that reuses a live order reference of its stock, or an execution, cancel, delete, or
-replace that names no live order of its stock.
+side other than `B` or `S`, a truncated last message, an add or a replacement that reuses a live
+order reference of its stock, or an execution, cancel, delete, or replace that names no live order of
+its stock.
 
 ### Design
 
@@ -119,7 +119,7 @@ the measurements behind each choice. The library in `include/order_book/` has si
   ranges in use, and the recent orders most messages name share a few pages. Each order is 8 bytes:
   its remaining shares and its level's handle. Each book keeps its own reference numbers, as a CSV
   book keeps its order IDs, so an order whose reference number another locate's live order holds
-  goes to a hash map keyed by both.
+  goes to a hash map keyed by both, as does one whose reference number is 2^32 or above.
 - [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
   feed, keeps a book per ticker, and writes a line whenever a BBO changes. Worker threads, one per
   hardware thread by default, each keep the books of the tickers that hash to them, or of the stock

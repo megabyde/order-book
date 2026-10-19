@@ -20,11 +20,9 @@ std::string describe(const ItchError& error)
         return std::format("'{}' message has {} bytes, expected {}", error.type, error.size,
                            error.value);
     case ItchError::Reason::InvalidSide:
-        return std::format("invalid side 0x{:02x}", byte);
-    case ItchError::Reason::OrderOutOfRange:
         break;
     }
-    return std::format("order reference out of range: {}", error.value);
+    return std::format("invalid side 0x{:02x}", byte);
 }
 
 namespace {

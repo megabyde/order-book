@@ -13,10 +13,6 @@
 
 namespace order_book {
 
-/// Order reference numbers must be below this, which bounds the replay's reference index. Nasdaq
-/// starts them low each day: the largest on 2019-12-30 is 308,631,072.
-inline constexpr std::uint64_t max_itch_order = std::uint64_t{1} << 32U;
-
 /// What an ITCH message does
 enum class ItchKind : std::uint8_t {
     Add,     ///< A or F: add an order
@@ -47,16 +43,15 @@ struct ItchMessage {
 struct ItchError {
     /// The rule the message broke
     enum class Reason : std::uint8_t {
-        Empty,           ///< No bytes at all
-        UnknownType,     ///< A type byte outside the specification
-        WrongSize,       ///< A size other than the specification's for its type
-        InvalidSide,     ///< A side other than B or S
-        OrderOutOfRange, ///< An order reference number of max_itch_order or above
+        Empty,       ///< No bytes at all
+        UnknownType, ///< A type byte outside the specification
+        WrongSize,   ///< A size other than the specification's for its type
+        InvalidSide, ///< A side other than B or S
     };
     Reason reason;    ///< The rule broken
     char type;        ///< The message type, or the offending byte for UnknownType and InvalidSide
     std::size_t size; ///< The message's size, for WrongSize
-    std::uint64_t value; ///< The expected size for WrongSize, the reference for OrderOutOfRange
+    std::uint64_t value; ///< The expected size for WrongSize
     /// Memberwise equality
     friend bool operator==(const ItchError&, const ItchError&) = default;
 };
@@ -185,14 +180,6 @@ template <typename Handler> decltype(auto) visit_itch(std::string_view message, 
     if (type == 'U') {
         decoded.replacement = read<std::uint64_t>(message, new_order_offset);
     }
-    if ((decoded.order | decoded.replacement) >= max_itch_order) [[unlikely]] {
-        return handler.error(ItchError{
-            .reason = ItchError::Reason::OrderOutOfRange,
-            .type = type,
-            .size = 0,
-            .value = decoded.order >= max_itch_order ? decoded.order : decoded.replacement,
-        });
-    }
     switch (type) {
     case 'A':
     case 'F': {
@@ -233,8 +220,7 @@ template <typename Handler> decltype(auto) visit_itch(std::string_view message, 
 /// A and F become Add; E, C, and X become Execute, since each takes shares off the order; D becomes
 /// Delete and U Replace; P and Q, trades that do not touch the book, become Trade; the
 /// specification's other types become Skipped. Fails on an empty message, an unknown type, a size
-/// other than the specification's for a type the book uses, a side other than B or S, or an order
-/// reference of max_itch_order or above.
+/// other than the specification's for a type the book uses, or a side other than B or S.
 [[nodiscard]] std::expected<ItchMessage, ItchError> decode_itch(std::string_view message);
 
 /// The stock locate and order reference number of a message, as peek_itch() reads them

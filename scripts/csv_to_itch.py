@@ -3,17 +3,18 @@
 
 Usage: csv_to_itch.py FILE [-o OUT]
 
-FILE is a feed in the format reference_bbo.py reads, with numeric order IDs below 2**32 and tickers
-of at most 8 characters. The output is length-prefixed ITCH 5.0 messages, so
+FILE is a feed in the format reference_bbo.py reads, with numeric order IDs from 1 to 2**64 - 1 and
+tickers of at most 8 characters. The output is length-prefixed ITCH 5.0 messages, so
 `order_book --format=itch OUT` prints the same lines as `order_book FILE`: the timestamp field
 carries the CSV time unchanged, and the stock field the ticker.
 
 The encoding varies to cover every message type the replay decodes. Adds alternate between A and F,
 and executions between E and C. A decrease to a nonzero quantity alternates between X, which cancels
 the difference, and U, which replaces the order by one under a new reference number that later
-messages then use. A decrease to 0 cancels the remainder, F executes it, and T and X become P and Q.
-Each ticker gets a stock directory message before its first event, and system event messages open
-and close the feed; the replay skips both.
+messages then use; replacements alternate between reference numbers below 2**32, which the replay
+keeps in its index, and ones near 2**64, which it keeps beside it. A decrease to 0 cancels the
+remainder, F executes it, and T and X become P and Q. Each ticker gets a stock directory message
+before its first event, and system event messages open and close the feed; the replay skips both.
 """
 
 from __future__ import annotations
@@ -24,8 +25,9 @@ import struct
 import sys
 
 UINT48_MAX = 2**48 - 1
-# The replay rejects order reference numbers from 2**32 up
-MAX_ITCH_ORDER = 2**32
+# Order reference numbers are 64 bits; the replay indexes those below 2**32
+REFERENCE_END = 2**64
+INDEXED_END = 2**32
 
 
 class EncodeError(Exception):
@@ -40,10 +42,11 @@ class Encoder:
         self.orders: dict[tuple[str, str], list] = {}
         self.adds = self.executions = self.decreases = 0
         self.match = 0
-        # Replacements count down from the top of the range, skipping every order ID of the feed,
-        # so a replacement never takes a reference number a later add uses
+        # Replacements count down from the top of the indexed range and of the whole range in turn,
+        # skipping every order ID of the feed, so a replacement never takes a reference number a
+        # later add uses
         self.used = used
-        self.replacement = MAX_ITCH_ORDER
+        self.replacements = [INDEXED_END, REFERENCE_END]
 
     def message(self, body: bytes) -> None:
         self.out.append(struct.pack(">H", len(body)) + body)
@@ -69,12 +72,14 @@ class Encoder:
         return self.locates[ticker]
 
     def next_replacement(self) -> int:
-        self.replacement -= 1
-        while self.replacement in self.used:
-            self.replacement -= 1
-        if self.replacement <= 0:
+        turn = self.decreases // 2 % 2
+        replacement = self.replacements[turn] - 1
+        while replacement in self.used:
+            replacement -= 1
+        if replacement <= 0:
             raise EncodeError("no reference number left for a replacement")
-        return self.replacement
+        self.replacements[turn] = replacement
+        return replacement
 
     def next_match(self) -> int:
         self.match += 1
@@ -105,8 +110,8 @@ class Encoder:
 
         if kind in ("B", "S"):
             reference = int(order_id)
-            if (ticker, order_id) in self.orders or not 0 < reference < MAX_ITCH_ORDER:
-                raise EncodeError(f"order ID '{order_id}' is live or not below {MAX_ITCH_ORDER}")
+            if (ticker, order_id) in self.orders or not 0 < reference < REFERENCE_END:
+                raise EncodeError(f"order ID '{order_id}' is live or not below {REFERENCE_END}")
             self.orders[ticker, order_id] = [reference, shares, price]
             body = struct.pack(">Q", reference) + kind.encode() + struct.pack(">I", shares)
             body += self.stock(ticker) + struct.pack(">I", price)
