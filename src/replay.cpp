@@ -381,10 +381,12 @@ public:
                 const auto ahead = peek_itch(bytes(mine + distance));
                 m_market.prefetch(ahead.order, ahead.locate);
             }
+#if !defined(__linux__) || !defined(__x86_64__)
             if (mine + (distance / 2) < count) {
                 const auto ahead = peek_itch(bytes(mine + (distance / 2)));
                 m_market.prefetch_levels(ahead.order, ahead.locate);
             }
+#endif
             if (!apply(bytes(mine), batch.first + m_mine[mine], output)) {
                 return false;
             }

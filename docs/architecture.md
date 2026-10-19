@@ -159,9 +159,10 @@ The worker prefetches. Applying a message is a chain of dependent loads, from th
 level to the book side, and a message is several hundred instructions, about as many as the core
 keeps in flight, so without help it waits for each miss in turn. Sixteen messages ahead, the worker
 reads the message's locate and reference number with `peek_itch()` and starts loading the order's
-index entry and the book; eight messages ahead, once those have arrived, it starts loading the
-order's level and the book's two best levels, which the BBO line reads. On one thread this took the
-day from 24.6–24.9 s to 20.6–20.8 s, and any distance from 8 to 64 ran within 4%.
+index entry and the book. Linux x86_64 stops at this stage. Other platforms also prefetch eight
+messages ahead, once those loads have arrived, to load the order's level and the book's two best
+levels, which the BBO line reads. On one thread on the M1 Max, the two stages took the day from
+24.6–24.9 s to 20.6–20.8 s, and any distance from 8 to 64 ran within 4%.
 
 ## Output
 
