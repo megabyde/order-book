@@ -55,9 +55,10 @@ The defaults differ from a stock CMake project, and the differences are delibera
 
 ## Dependencies
 
-Update in this order: edit the pins in `conanfile.py`, run `make lock`, run the workflow that
-covers the change, then commit `conanfile.py` and `conan.lock` together. A lock regenerated without
-a pin change is a no-op commit; drop it rather than committing churn.
+`conanfile.py` gives each dependency a version range and `conan.lock` pins the versions builds use.
+To update, run `make lock`, which resolves every range to the newest release, run the workflow that
+covers the change, then commit `conan.lock`, with `conanfile.py` if a range changed. Raise a range's
+lower bound only when the code needs the newer version.
 
 `scripts/check_settings_subset.py` verifies that an installed Conan `settings_user.yml` covers the
 sanitizer values this project needs. It parses only Conan's documented two-level structure and uses

@@ -247,9 +247,9 @@ format-check: ## Fail if any formatted source type is not format-clean
 # Lock and clean
 # ---------------------------------------------------------------------------
 .PHONY: lock
-lock: ## Force-regenerate conan.lock from conanfile.py
+lock: ## Re-resolve conan.lock to the newest versions conanfile.py allows
 	echo "Regenerating conan.lock..."
-	conan lock create . -pr=$(CONAN_PROFILE) --lockfile-clean --lockfile-out=conan.lock
+	conan lock create . -pr=$(CONAN_PROFILE) --lockfile="" --update --lockfile-clean --lockfile-out=conan.lock
 
 # Scope: validates the graph resolved by the default profile only. If requirements()
 # ever gains platform-conditional requires (the pattern its comment advertises), this
