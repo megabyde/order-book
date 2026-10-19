@@ -130,9 +130,10 @@ Written as one function, the compiler kept `add()` out of line once both books c
 Decoding is a single dispatch: `visit_itch()` reads the type byte and calls the handler method for
 the message's kind with the decoded fields, so the replay looks at the type once.
 
-Orders live in an index of pages by reference number. A page holds the orders of 128 consecutive
-reference numbers, 8 bytes each: the order's remaining shares and the handle of its level. A
-two-level directory finds the page, made only for the ranges in use, so one reference number near
+Orders live in an index of pages by reference number. A page holds 256 consecutive reference
+numbers on Linux x86-64 and 128 elsewhere. Each order takes 8 bytes for its remaining shares and
+the handle of its level. A two-level directory finds the page, made only for the ranges in use,
+so one reference number near
 2^32 costs one directory chunk rather than a table in every worker. Nasdaq assigns reference numbers
 in sequence within each of several ranges at once, so the recent orders most messages name sit in a
 few pages that stay in cache.
@@ -221,7 +222,8 @@ Several ideas lost when measured, and are not in the code:
 The ITCH market's memory is mostly pages. Each worker keeps only its own locates, so its orders are
 a sparse subset of every range of reference numbers, and the few long-lived orders left in a range
 keep its pages alive all day: at its peak, one market on the real day held 1.9M live orders in pages
-of 256 reference numbers about 2% full. Pages of 128 reference numbers, exactly 1 KiB because their
-live counts sit in the directory, keep the application's peak at 1.11 GB with all threads, against
-1.90 GB with 256 and the count inside the page, which the macOS allocator rounded up from 2,052 to
-2,560 bytes.
+of 256 reference numbers about 2% full. On the M1 Max, pages of 128 reference numbers, exactly 1 KiB
+because their live counts sit in the directory, kept the application's peak at 1.11 GB with all
+threads, against 1.90 GB with 256 and the count inside the page. The macOS allocator rounded those
+2,052-byte pages up to 2,560 bytes. Linux x86-64 uses 256-reference, 2 KiB pages with 16-bit live
+counts in the directory. Other platforms keep 128-reference pages and 8-bit counts.
