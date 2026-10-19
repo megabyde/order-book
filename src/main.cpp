@@ -1,5 +1,6 @@
 #include <order_book/replay.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <exception>
 #include <fstream>
@@ -46,8 +47,13 @@ int run(std::span<const char* const> args)
         return 1;
     }
 
+    auto workers = std::thread::hardware_concurrency();
+#if defined(__linux__) && defined(__x86_64__)
+    constexpr auto max_workers = 8U;
+    workers = std::min(workers, max_workers);
+#endif
     // Flushes std::cout and throws if that fails
-    order_book::replay(input, std::cout, format, std::thread::hardware_concurrency());
+    order_book::replay(input, std::cout, format, workers);
     return 0;
 }
 

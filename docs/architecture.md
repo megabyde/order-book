@@ -80,9 +80,10 @@ batches read so far are applied and written, and the exception is rethrown after
 their records failed first. The read runs inside `std::string::resize_and_overwrite()`, which must
 not see an exception, so the reader keeps the exception until the call returns.
 
-The default is one worker per hardware thread. The ITCH day is CPU-bound from 8 workers on an M1
-Max: total CPU time grows from 28.4 s on one thread to 37.7 s on eight, and the two efficiency cores
-add 3.3 s of CPU without making the run shorter.
+The CLI uses one worker per hardware thread, capped at eight on Linux x86-64. `replay()` keeps its
+explicit worker count and default unchanged. The ITCH day is CPU-bound from 8 workers on an M1 Max:
+total CPU time grows from 28.4 s on one thread to 37.7 s on eight, and the two efficiency cores add
+3.3 s of CPU without making the run shorter.
 
 ## The CSV book
 
