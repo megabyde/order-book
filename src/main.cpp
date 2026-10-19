@@ -1,20 +1,20 @@
 #include <order_book/replay.hpp>
 
 #include <cstddef>
+#include <exception>
 #include <fstream>
 #include <ios>
 #include <iostream>
 #include <span>
-#include <stdexcept>
 #include <string_view>
 #include <thread>
 #include <vector>
 
-// NOLINTNEXTLINE(bugprone-exception-escape)
-int main(int argc, const char* argv[])
+namespace {
+
+int run(std::span<const char* const> args)
 {
     constexpr std::string_view format_flag = "--format=";
-    const std::span args(argv, static_cast<std::size_t>(argc));
     const auto flagged = args.size() == 3 && std::string_view(args[1]).starts_with(format_flag);
     if (args.size() != 2 && !flagged) {
         std::cerr << "Usage: " << args[0] << " [--format=csv|itch] FILE\n";
@@ -46,13 +46,28 @@ int main(int argc, const char* argv[])
         return 1;
     }
 
-    try {
-        order_book::replay(input, std::cout, format, std::thread::hardware_concurrency());
-    }
-    catch (const std::invalid_argument& error) {
-        std::cerr << "error: " << error.what() << '\n';
-        return 1;
-    }
-
+    // Flushes std::cout and throws if that fails
+    order_book::replay(input, std::cout, format, std::thread::hardware_concurrency());
     return 0;
+}
+
+} // namespace
+
+int main(int argc, const char* argv[])
+{
+    try {
+        return run(std::span(argv, static_cast<std::size_t>(argc)));
+    }
+    catch (const std::exception& error) {
+        // The lines before a failing record are part of the result
+        std::cout.flush();
+        std::cerr << "error: " << error.what() << '\n';
+    }
+    // Nothing in the program throws anything else
+    // GCOVR_EXCL_START
+    catch (...) {
+        std::cerr << "error: unknown exception\n";
+    }
+    // GCOVR_EXCL_STOP
+    return 1;
 }

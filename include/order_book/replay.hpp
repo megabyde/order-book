@@ -21,6 +21,12 @@ enum class Format : std::uint8_t {
 /// included. Throws std::invalid_argument prefixed with `line N: ` on the first line that cannot
 /// be parsed or applied; output up to that line has already been written.
 ///
+/// Throws std::runtime_error if `out` fails, including on the flush that ends a replay. If a read
+/// of `in`'s stream buffer throws, the whole records before it are replayed, a record it cut short
+/// is not, and the exception is rethrown, unless an earlier record failed. libstdc++'s
+/// std::filebuf throws on a read error; libc++'s and MSVC's report it as the end of the file,
+/// which ends the replay as the end would.
+///
 /// The input is read in batches of at least 1 MiB, several ahead of the output, so `in` should be a
 /// file or a stream that reaches its end: a producer that waits for output before writing more
 /// can stall. Uses one worker thread per hardware thread; see the overload taking `threads`.

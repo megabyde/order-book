@@ -2,11 +2,14 @@
 
 #include <order_book/replay.hpp>
 
+#include "stream_buffers.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <format>
 #include <ios>
 #include <istream>
+#include <ostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -116,6 +119,70 @@ TEST(ReplayTest, WritesOutputBeforeTheFailingLine)
     std::ostringstream out;
     try {
         order_book::replay(in, out);
+        FAIL() << "replay accepted an unknown order";
+    }
+    catch (const std::invalid_argument& error) {
+        EXPECT_STREQ(error.what(), "line 3: unknown order '9'");
+    }
+    EXPECT_EQ(out.str(), "1,AAA,1000,100,,\n");
+}
+
+TEST(ReplayTest, ReportsOutputThatCannotBeWritten)
+{
+    std::istringstream in("Time,Ticker,Order,T,Shares,Price\n"
+                          "1,AAA,1,B,100,1000\n");
+    streams::Refusing buffer;
+    std::ostream out(&buffer);
+    try {
+        order_book::replay(in, out, 2);
+        FAIL() << "replay wrote to a stream that takes nothing";
+    }
+    catch (const std::runtime_error& error) {
+        EXPECT_STREQ(error.what(), "cannot write the output");
+    }
+}
+
+TEST(ReplayTest, ReportsOutputThatCannotBeFlushed)
+{
+    std::istringstream in("Time,Ticker,Order,T,Shares,Price\n"
+                          "1,AAA,1,B,100,1000\n");
+    streams::Unflushable buffer;
+    std::ostream out(&buffer);
+    try {
+        order_book::replay(in, out, 2);
+        FAIL() << "replay succeeded without flushing its output";
+    }
+    catch (const std::runtime_error& error) {
+        EXPECT_STREQ(error.what(), "cannot write the output");
+    }
+    EXPECT_EQ(buffer.str(), "1,AAA,1000,100,,\n");
+}
+
+TEST(ReplayTest, ReplaysWholeLinesBeforeAReadFailure)
+{
+    // The read fails within line 3, whose first part would apply as an ask of 10 shares
+    const std::string feed = "Time,Ticker,Order,T,Shares,Price\n"
+                             "1,AAA,1,B,100,1000\n"
+                             "2,AAA,2,S,10";
+    for (std::size_t threads = 1; threads <= 3; ++threads) {
+        streams::ReadFailure buffer(feed + "00,1010\n", feed.size());
+        EXPECT_EQ(streams::written_before_read_failure(buffer, order_book::Format::Csv, threads),
+                  "1,AAA,1000,100,,\n")
+            << "threads " << threads;
+    }
+}
+
+TEST(ReplayTest, ReportsALineBeforeAReadFailureFirst)
+{
+    const std::string feed = "Time,Ticker,Order,T,Shares,Price\n"
+                             "1,AAA,1,B,100,1000\n"
+                             "2,AAA,9,D,0,0\n"
+                             "3,AAA,2,B,100,1010\n";
+    streams::ReadFailure buffer(feed + "4,AAA,3,B,100,1020\n", feed.size());
+    std::istream in(&buffer);
+    std::ostringstream out;
+    try {
+        order_book::replay(in, out, 2);
         FAIL() << "replay accepted an unknown order";
     }
     catch (const std::invalid_argument& error) {

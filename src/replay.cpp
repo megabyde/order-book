@@ -172,7 +172,8 @@ public:
 
     // Replace `text` with at least batch_size bytes of whole records, fewer at the end of the
     // stream, where the last record may be incomplete, as a fresh `framing` finds them. Empty once
-    // the stream is exhausted.
+    // the stream is exhausted. A read that throws ends the stream after the last whole record
+    // before it, and failure() then holds the exception.
     void next(std::string& text, Framing& framing)
     {
         text = std::exchange(m_carry, {});
@@ -180,14 +181,24 @@ public:
         while (!m_done) {
             const auto size = text.size();
             text.resize_and_overwrite(size + batch_size, [&](char* data, std::size_t) {
+                // resize_and_overwrite() leaves the string undefined if this throws
+                std::streamsize count = 0;
+                try {
+                    count = m_source->sgetn(data + size, static_cast<std::streamsize>(batch_size));
+                }
+                catch (...) {
+                    m_failure = std::current_exception();
+                }
                 // A stream buffer may return less than asked before its end, so only an empty
                 // read ends the input
-                const auto count =
-                    m_source->sgetn(data + size, static_cast<std::streamsize>(batch_size));
                 m_done = count == 0;
                 return size + static_cast<std::size_t>(count);
             });
             end = framing.scan(text, size);
+            if (m_failure) {
+                text.resize(end == std::string::npos ? 0 : end);
+                return;
+            }
             if (text.size() >= batch_size && end != std::string::npos) {
                 m_carry.assign(text, end);
                 text.resize(end);
@@ -196,9 +207,13 @@ public:
         }
     }
 
+    // What a read of the stream threw, if one did
+    [[nodiscard]] const std::exception_ptr& failure() const { return m_failure; }
+
 private:
     std::streambuf* m_source;
     bool m_done;
+    std::exception_ptr m_failure;
     // Start of a record that continues into the next batch
     std::string m_carry;
 };
@@ -562,7 +577,8 @@ private:
 };
 
 // Write the batch's output in record order and return its event count. Throws for the batch's
-// first failing record, naming it by `unit`, after writing the output before it.
+// first failing record, naming it by `unit`, after writing the output before it, and throws
+// std::runtime_error if `out` fails.
 std::size_t write_batch(Batch& batch, std::ostream& out, std::string& buffer, std::string_view unit)
 {
     const std::pair<std::size_t, std::string>* failure = batch.failure ? &*batch.failure : nullptr;
@@ -599,6 +615,9 @@ std::size_t write_batch(Batch& batch, std::ostream& out, std::string& buffer, st
         ++position;
     }
     out.write(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    if (!out) {
+        throw std::runtime_error("cannot write the output");
+    }
 
     if (failure != nullptr) {
         throw record_error(unit, failure->first, failure->second);
@@ -638,6 +657,12 @@ std::size_t run(std::istream& in, std::ostream& out, std::size_t threads,
             ++queued;
         }
         if (queued == 0) {
+            if (reader.failure()) {
+                std::rethrow_exception(reader.failure());
+            }
+            if (!out.flush()) {
+                throw std::runtime_error("cannot write the output");
+            }
             return events;
         }
         events += write_batch(*pipeline.pop(), out, buffer, unit);

@@ -253,6 +253,17 @@ if(BUILD_TESTING)
     add_app_error_test(
         RejectsMissingFile 1 "error: cannot open '.*missing.csv'" ${PROJECT_BINARY_DIR}/missing.csv
     )
+    # Closing the application's standard output takes a POSIX shell
+    if(NOT WIN32)
+        add_test(
+            NAME AppTest.ReportsClosedOutput
+            COMMAND
+                ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DCLOSED_STDOUT=ON
+                -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv -DEXIT=1
+                "-DPATTERN=error: cannot write the output" -P
+                ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+        )
+    endif()
 
     function(add_rejected_input_test name message)
         add_app_error_test(

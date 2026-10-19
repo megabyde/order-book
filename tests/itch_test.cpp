@@ -8,6 +8,7 @@
 #include <order_book/replay.hpp>
 
 #include "itch_messages.hpp"
+#include "stream_buffers.hpp"
 
 #include <algorithm>
 #include <array>
@@ -744,6 +745,20 @@ INSTANTIATE_TEST_SUITE_P(
            FailureCase{"TruncatedBody", itch::framed(itch::remove(1, 3, 1)).substr(0, 10),
                        "message 3: truncated message: 8 of 19 bytes"}),
     [](const TestParamInfo<FailureCase>& info) { return std::string(info.param.name); });
+
+TEST(ItchReplayTest, ReplaysWholeMessagesBeforeAReadFailure)
+{
+    // The read fails within message 3, which a truncated feed would report instead
+    const auto feed = itch::framed(itch::add(1, 1, 1, 'B', 100, "AAA", 1000)) +
+                      itch::framed(itch::add(1, 2, 2, 'S', 50, "AAA", 1010));
+    const auto cut = itch::framed(itch::remove(1, 3, 1));
+    for (std::size_t threads = 1; threads <= 3; ++threads) {
+        streams::ReadFailure buffer(feed + cut, feed.size() + 10);
+        EXPECT_EQ(streams::written_before_read_failure(buffer, Format::Itch, threads),
+                  "1,AAA,1000,100,,\n2,AAA,1000,100,1010,50\n")
+            << "threads " << threads;
+    }
+}
 
 TEST(ItchReplayTest, OutputDoesNotDependOnThreads)
 {
