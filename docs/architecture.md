@@ -123,6 +123,15 @@ Each book keeps its own reference numbers, as a CSV book keeps its order IDs, so
 a worker cannot change what a feed means. An order whose reference number another locate's live
 order holds goes to a hash map keyed by both; on the real day it stays empty.
 
+The index covers reference numbers below 2^32, which keeps a worker's directory within 2^16 chunk
+pointers, and a lookup of a larger number falls past its end without a check of its own. ITCH gives
+reference numbers 64 bits, so an order from 2^32 up goes to the same hash map. Nasdaq's numbers stay
+far below the bound, the largest on 2019-12-30 being 308,631,072, but a feed that starts high still
+replays, only slower. Only `add()` and `reduce()` test the bound. In four interleaved rounds on the
+real day, `BM_ItchEngine` ran 0.1–0.8 ns a message slower than when the decoder rejected larger
+numbers, about 0.7% and within the 0.9 ns spread of its repetitions, and the application's wall and
+CPU time did not change.
+
 The worker prefetches. Applying a message is a chain of dependent loads, from the index entry to the
 level to the book side, and a message is several hundred instructions, about as many as the core
 keeps in flight, so without help it waits for each miss in turn. Sixteen messages ahead, the worker

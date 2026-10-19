@@ -6,8 +6,10 @@
 #include <expected>
 #include <limits>
 #include <memory>
-#include <unordered_map>
+#include <utility>
 #include <vector>
+
+#include <ankerl/unordered_dense.h>
 
 #include <order_book/feed.hpp>
 #include <order_book/itch.hpp>
@@ -28,7 +30,8 @@ namespace order_book {
  *
  * Each book keeps its own reference numbers, as the CSV books keep their order IDs, so that which
  * locates share a market does not change what a feed means. An order whose reference number names
- * a live order of another locate goes to a hash map keyed by both instead of the index.
+ * a live order of another locate goes to a hash map keyed by both instead of the index, as does one
+ * whose reference number is too large for the index.
  */
 class ItchMarket {
 public:
@@ -72,6 +75,10 @@ private:
         std::uint32_t remaining;
         std::uint32_t level;
     };
+    // Reference numbers below this live in the index, and larger ones in m_overflow. Nasdaq starts
+    // them low each day: the largest on 2019-12-30 is 308,631,072. The bound keeps m_chunks within
+    // 2^16 entries, so a larger reference number's chunk is past its end and lookups need no check.
+    static constexpr std::uint64_t paged_orders = std::uint64_t{1} << 32U;
     // Small pages, because each worker keeps only the locates assigned to it, so its orders are a
     // sparse subset of every range of reference numbers, and long-lived orders keep pages alive. On
     // the 2019-12-30 day, 128 reference numbers a page gave the lowest peak with ten workers:
@@ -116,9 +123,10 @@ private:
     std::vector<std::unique_ptr<Chunk>> m_chunks;
     // Emptied pages, kept for reuse
     std::vector<std::unique_ptr<Page>> m_spare_pages;
-    // Orders whose slot in the index holds a live order of another locate, by reference number and
-    // locate. Empty for a feed whose reference numbers are unique for the day, as ITCH's are.
-    std::unordered_map<std::uint64_t, Order> m_overflow;
+    // Orders the index does not hold, by reference number and locate: those whose slot holds a live
+    // order of another locate, and those from paged_orders up. Empty for a Nasdaq feed, whose
+    // reference numbers are unique for the day and start low.
+    ankerl::unordered_dense::map<std::pair<std::uint64_t, std::uint16_t>, Order> m_overflow;
     std::size_t m_order_count = 0;
 };
 
