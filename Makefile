@@ -54,12 +54,23 @@ COVERAGE_FAIL_UNDER ?= 100
 BENCH_FEED := build/bench/feed.csv
 BENCH_DEEP_FEED := build/bench/deep.csv
 BENCH_ARGS ?= --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
+FUZZ_DIR := build/fuzz
+FUZZ_SECONDS ?= 60
+FUZZERS := csv_replay_fuzz itch_replay_fuzz itch_market_fuzz
+# libFuzzer ships with LLVM's Clang, not with AppleClang or GCC: macOS uses Homebrew's LLVM
+ifeq ($(UNAME_S),Darwin)
+FUZZ_CC ?= $(HOMEBREW_LLVM_PREFIX)/bin/clang
+FUZZ_CXX ?= $(HOMEBREW_LLVM_PREFIX)/bin/clang++
+else
+FUZZ_CC ?= clang
+FUZZ_CXX ?= clang++
+endif
 SANITIZE_STAMPS := \
 	$(STAMP_DIR)/sanitize.stamp \
 	$(STAMP_DIR)/sanitize-asan.stamp \
 	$(STAMP_DIR)/sanitize-ubsan.stamp \
 	$(STAMP_DIR)/sanitize-tsan.stamp
-FORMAT_SOURCES = $(shell find include src tests bench -type f \( -name '*.hpp' -o -name '*.cpp' \))
+FORMAT_SOURCES = $(shell find include src tests bench fuzz -type f \( -name '*.hpp' -o -name '*.cpp' \))
 CMAKE_FORMAT_SOURCES = CMakeLists.txt
 TIDY_SOURCES = $(shell find src tests bench -type f -name '*.cpp')
 # Tracked Markdown/JSON/YAML only; conan.lock is Conan-generated, so its formatting is
@@ -164,6 +175,23 @@ bench: $(STAMP_DIR)/release.stamp $(BENCH_FEED) $(BENCH_DEEP_FEED) ## Run the re
 	cmake --build --preset release --target order_book_bench
 	ORDER_BOOK_REPLAY_CSV="$${ORDER_BOOK_REPLAY_CSV:-$(BENCH_FEED):$(BENCH_DEEP_FEED)}" \
 		build/release/order_book_bench $(BENCH_ARGS)
+
+.PHONY: fuzz
+fuzz: $(STAMP_DIR)/debug.stamp ## Build the fuzzers with FUZZ_CC and FUZZ_CXX and run their seeds
+	CC="$(FUZZ_CC)" CXX="$(FUZZ_CXX)" cmake --workflow --preset fuzz
+
+.PHONY: fuzz-run
+fuzz-run: fuzz ## Run each fuzzer for FUZZ_SECONDS, keeping its corpus under build/fuzz/corpus
+	set -e; for fuzzer in $(FUZZERS); do \
+		case $$fuzzer in \
+			csv_replay_fuzz) seeds=tests/data ;; \
+			itch_replay_fuzz) seeds=$(FUZZ_DIR)/fuzz_seeds/itch ;; \
+			*) seeds= ;; \
+		esac; \
+		mkdir -p $(FUZZ_DIR)/corpus/$$fuzzer $(FUZZ_DIR)/crashes; \
+		$(FUZZ_DIR)/$$fuzzer -max_total_time=$(FUZZ_SECONDS) \
+			-artifact_prefix=$(FUZZ_DIR)/crashes/$$fuzzer- $(FUZZ_DIR)/corpus/$$fuzzer $$seeds; \
+	done
 
 .PHONY: docs
 docs: $(STAMP_DIR)/debug.stamp ## Generate Doxygen HTML documentation

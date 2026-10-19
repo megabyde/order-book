@@ -33,6 +33,8 @@ public build interface, and the workflow presets are what CI runs.
 - `make lint` runs clang-tidy, cmake-lint, ruff, and markdownlint. `make format` rewrites in place
   and `make format-check` fails instead.
 - `make lock` regenerates `conan.lock`; `make lock-check` is the CI guard.
+- `make fuzz` builds the libFuzzer targets and runs their seeds; `make fuzz-run` fuzzes each for
+  `FUZZ_SECONDS`. See [Fuzzing](docs/development.md#fuzzing) for the supported compilers.
 - `make docs` generates the Doxygen HTML.
 - `make bench` runs the release benchmarks; see [Benchmarks](docs/development.md#benchmarks).
 

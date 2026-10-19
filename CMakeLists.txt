@@ -25,6 +25,17 @@ option(ENABLE_COVERAGE "Enable code coverage instrumentation" OFF)
 option(ENABLE_HARDENING "Enable hardening compile and link flags" ON)
 option(ENABLE_LTO "Enable link-time optimization for Release builds" ON)
 option(BUILD_BENCHMARKS "Build the Google Benchmark suite" ON)
+option(BUILD_FUZZERS "Build the libFuzzer targets, with every target under ASan and UBSan" OFF)
+
+# libFuzzer's coverage feedback and the sanitizers must reach the library the fuzzers call, and
+# everything that links it then needs the sanitizer runtimes. The fuzzers add libFuzzer's main().
+if(BUILD_FUZZERS)
+    add_compile_options(
+        -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all
+        -fno-omit-frame-pointer
+    )
+    add_link_options(-fsanitize=fuzzer-no-link,address,undefined)
+endif()
 
 include(CheckIPOSupported)
 if(ENABLE_LTO)
@@ -360,6 +371,55 @@ if(BUILD_TESTING)
                 ${PROJECT_SOURCE_DIR}/tests/replay_itch.cmake
         )
     endif()
+endif()
+
+# --- fuzzers ---------------------------------------------------------------
+if(BUILD_FUZZERS)
+    function(add_fuzzer name source)
+        add_executable(${name} ${source})
+        target_link_libraries(${name} PRIVATE order_book_lib)
+        target_link_options(${name} PRIVATE -fsanitize=fuzzer)
+        enable_project_options(${name})
+    endfunction()
+    foreach(format Csv Itch)
+        string(TOLOWER ${format} name)
+        add_fuzzer(${name}_replay_fuzz fuzz/replay_fuzz.cpp)
+        target_compile_definitions(${name}_replay_fuzz PRIVATE ORDER_BOOK_FUZZ_FORMAT=${format})
+    endforeach()
+    add_fuzzer(itch_market_fuzz fuzz/itch_market_fuzz.cpp)
+    target_include_directories(itch_market_fuzz PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+
+    # Seed inputs: the CSV test feeds, and two of them as csv_to_itch.py encodes them
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(FUZZ_SEEDS ${PROJECT_BINARY_DIR}/fuzz_seeds)
+    set(ITCH_SEEDS)
+    foreach(feed sample wide_references)
+        set(ITCH_SEED ${FUZZ_SEEDS}/itch/${feed}.itch)
+        add_custom_command(
+            OUTPUT ${ITCH_SEED}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${FUZZ_SEEDS}/itch
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/csv_to_itch.py
+                    ${PROJECT_SOURCE_DIR}/tests/data/${feed}.csv -o ${ITCH_SEED}
+            DEPENDS ${PROJECT_SOURCE_DIR}/scripts/csv_to_itch.py
+                    ${PROJECT_SOURCE_DIR}/tests/data/${feed}.csv
+            COMMENT "Encode ${feed}.csv as an ITCH fuzzing seed"
+        )
+        list(APPEND ITCH_SEEDS ${ITCH_SEED})
+    endforeach()
+    add_custom_target(
+        fuzz_seeds ALL
+        DEPENDS ${ITCH_SEEDS}
+        COMMENT "ITCH fuzzing seeds"
+    )
+
+    # Each replay fuzzer runs its seeds once, and the market fuzzer a fixed number of generated
+    # inputs, so the preset's tests are deterministic. make fuzz-run does the open-ended fuzzing.
+    enable_testing()
+    add_test(NAME Fuzz.CsvReplaySeeds COMMAND csv_replay_fuzz -runs=0
+                                              ${PROJECT_SOURCE_DIR}/tests/data
+    )
+    add_test(NAME Fuzz.ItchReplaySeeds COMMAND itch_replay_fuzz -runs=0 ${FUZZ_SEEDS}/itch)
+    add_test(NAME Fuzz.ItchMarketRuns COMMAND itch_market_fuzz -runs=50000 -seed=1)
 endif()
 
 # --- benchmarks ------------------------------------------------------------

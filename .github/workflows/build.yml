@@ -160,6 +160,41 @@ jobs:
           name: coverage-report
           path: build/coverage/coverage-report/
 
+  # Builds the libFuzzer targets, runs their seeds, and fuzzes each for 60 seconds. A failing input
+  # is uploaded so it can be replayed locally.
+  fuzz:
+    name: fuzz / ubuntu-latest / clang
+    runs-on: ubuntu-latest
+    env:
+      CC: clang-19
+      CXX: clang++-19
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 200M
+    steps:
+      - uses: actions/checkout@v7
+      - *load-ci-env
+      # libFuzzer and the sanitizer runtimes are in compiler-rt, installed explicitly
+      - run: sudo apt-get update && sudo apt-get install -y ccache mold clang-19 libclang-rt-19-dev
+      - uses: conan-io/setup-conan@v1
+        with:
+          version: ${{ env.CONAN_VERSION }}
+      - uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ env.CONAN_VERSION }}-fuzz-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-fuzz-${{ env.RUNNER_IMAGE }}-
+      - uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ccache-fuzz-${{ github.run_id }}
+          restore-keys: ccache-fuzz-
+      - run: make fuzz-run FUZZ_CC=clang-19 FUZZ_CXX=clang++-19
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-crashes
+          path: build/fuzz/crashes/
+
   lint:
     runs-on: ubuntu-latest
     env:
