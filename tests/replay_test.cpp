@@ -201,7 +201,7 @@ TEST(ReplayTest, OutputDoesNotDependOnThreads)
     const auto expected = sequential_out.str();
     ASSERT_EQ(std::ranges::count(expected, '\n'), events);
 
-    for (const std::size_t threads : {0, 2, 3, 8}) {
+    for (const std::size_t threads : {0, 2, 3, 8, 32}) {
         std::istringstream in(feed);
         std::ostringstream out;
         EXPECT_EQ(order_book::replay(in, out, threads), events) << threads << " threads";
@@ -227,7 +227,7 @@ TEST(ReplayTest, StopsAtFailingLineWhateverTheThreads)
     std::ostringstream prefix_out;
     order_book::replay(prefix_in, prefix_out, 1);
 
-    for (const std::size_t threads : {1, 4}) {
+    for (const std::size_t threads : {1, 4, 32}) {
         std::istringstream in(feed);
         std::ostringstream out;
         try {

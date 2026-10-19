@@ -556,11 +556,14 @@ private:
                 output.exception = std::current_exception();
             }
             // GCOVR_EXCL_STOP
+            bool completed;
             {
                 const std::scoped_lock lock(m_mutex);
-                --batch->pending;
+                completed = --batch->pending == 0;
             }
-            m_changed.notify_all();
+            if (completed) {
+                m_changed.notify_all();
+            }
             if (!processed) {
                 return;
             }

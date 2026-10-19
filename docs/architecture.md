@@ -44,7 +44,29 @@ flight. A worker writes a line into its own buffer for each record that changes 
 the record's number. When all workers have finished a batch, the calling thread marks which worker,
 if any, wrote a line for each record, copies the lines out in record order, and writes the batch in
 one call. The output therefore does not depend on the thread count; the tests compare a one-thread
-replay with replays on up to eight threads for CSV and five for ITCH.
+replay with replays on up to 32 threads for both formats.
+
+Workers notify the shared condition variable only when the last worker completes a batch.
+An earlier completion changes neither the caller's completion predicate nor a worker's work
+predicate. Queue insertion and shutdown still notify every waiter. Completion also notifies every
+waiter because waking just one could select a worker instead of the caller.
+
+On Linux x86-64 with an Intel Core i9-13900, this reduced CSV replay's median elapsed time from
+1.021 s to 0.872 s, or 14.5%, across nine runs per build with alternating run order.
+The ranges were 0.883–1.088 s before and 0.837–1.095 s after. The two-sided exact rank-sum
+test gave p = 0.011. Median process CPU time fell from 8.514 s to 6.655 s, and voluntary context
+switches from 432,346 to 85,490. Profiling found futex contention before the change.
+Parsing, book updates, and output merging remain work that this change does not reduce.
+
+These measurements used GCC 15.2.0, `-O3`, LTO, hardening, and the default 32 workers on both
+builds. The input was eight copies of the generated 4M-event deep feed, with only the first CSV
+header retained. Each copy ends with empty books, so concatenation preserves valid order lifetimes.
+The CLI read warm files and wrote to `/dev/null`; separate untimed runs verified identical output
+hashes and 8,497,112 output lines. Desktop processes remained active during measurement.
+ITCH encoded from the same feed also produced identical output and fewer context switches, but its
+elapsed-time difference was inconclusive. A separate `-march=native` trial showed no consistent
+gain, so the release build retains generic x86-64 code generation. Synthetic feeds do not establish
+performance on a real trading-day capture.
 
 A record that fails stops its worker, whose books are unusable after a failed apply. The batch's
 earliest failure across all workers ends the replay: the merge writes the lines before it, then

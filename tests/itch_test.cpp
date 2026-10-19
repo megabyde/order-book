@@ -734,7 +734,7 @@ TEST_P(ItchFailureTest, NamesTheFailingMessage)
 {
     const auto feed = itch::framed(itch::add(1, 1, 1, 'B', 100, "AAA", 1000)) +
                       itch::framed(itch::add(2, 2, 2, 'S', 50, "BBB", 1010)) + GetParam().tail;
-    for (std::size_t threads = 1; threads <= 3; ++threads) {
+    for (const std::size_t threads : {1, 2, 3, 32}) {
         EXPECT_EQ(replay_error(feed, threads, "1,AAA,1000,100,,\n2,BBB,,,1010,50\n"),
                   GetParam().error)
             << "threads " << threads;
@@ -797,7 +797,7 @@ TEST(ItchReplayTest, OutputDoesNotDependOnThreads)
     std::string single;
     replay_itch(feed, single, 1);
     EXPECT_EQ(std::ranges::count(single, '\n'), 20'000);
-    for (std::size_t threads = 2; threads <= 5; ++threads) {
+    for (const std::size_t threads : {2, 3, 4, 5, 32}) {
         std::string output;
         replay_itch(feed, output, threads);
         EXPECT_EQ(output, single) << "threads " << threads;
