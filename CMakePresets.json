@@ -55,6 +55,20 @@
             }
         },
         {
+            "name": "fuzz",
+            "displayName": "Fuzzers",
+            "description": "libFuzzer targets with ASan and UBSan. Needs a Clang with libFuzzer as CC and CXX. Reuses the debug toolchain, whose one library dependency is header-only.",
+            "inherits": "debug",
+            "binaryDir": "${sourceDir}/build/fuzz",
+            "toolchainFile": "${sourceDir}/build/debug/generators/conan_toolchain.cmake",
+            "cacheVariables": {
+                "BUILD_FUZZERS": "ON",
+                "BUILD_TESTING": "OFF",
+                "BUILD_BENCHMARKS": "OFF",
+                "CMAKE_CXX_FLAGS_DEBUG": "-g -O1"
+            }
+        },
+        {
             "name": "docs",
             "displayName": "Docs",
             "description": "Doxygen documentation build. Reuses the debug Conan toolchain.",
@@ -100,6 +114,11 @@
         {
             "name": "coverage",
             "configurePreset": "coverage",
+            "configuration": "Debug"
+        },
+        {
+            "name": "fuzz",
+            "configurePreset": "fuzz",
             "configuration": "Debug"
         },
         {
@@ -169,6 +188,14 @@
             "output": {
                 "outputOnFailure": true
             }
+        },
+        {
+            "name": "fuzz",
+            "configurePreset": "fuzz",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ],
     "workflowPresets": [
@@ -226,6 +253,14 @@
                 { "type": "configure", "name": "coverage" },
                 { "type": "build", "name": "coverage" },
                 { "type": "test", "name": "coverage" }
+            ]
+        },
+        {
+            "name": "fuzz",
+            "steps": [
+                { "type": "configure", "name": "fuzz" },
+                { "type": "build", "name": "fuzz" },
+                { "type": "test", "name": "fuzz" }
             ]
         }
     ]

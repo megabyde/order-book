@@ -8,6 +8,7 @@
 #include <order_book/replay.hpp>
 
 #include "itch_messages.hpp"
+#include "market_model.hpp"
 #include "stream_buffers.hpp"
 
 #include <algorithm>
@@ -565,67 +566,6 @@ TEST(ItchMarketTest, ReplacesOrdersIntoTheIndexAndOut)
         delete_best(market, {{1, first_unindexed + 1}, {1, first_unindexed}, {2, last_reference}}));
     EXPECT_EQ(market.order_count(), 0U);
 }
-
-// The BBO of each locate from a model that keeps every level's total in a std::map
-class MarketModel {
-public:
-    void add(std::uint16_t locate, std::uint64_t order, Side side, Price price, Quantity shares)
-    {
-        m_orders[{locate, order}] = Resting{.side = side, .price = price, .remaining = shares};
-        auto& level = levels(locate, side)[price];
-        level.total += shares;
-        ++level.orders;
-    }
-    void take(std::uint16_t locate, std::uint64_t order, Quantity shares)
-    {
-        auto& resting = m_orders.at({locate, order});
-        auto& side = levels(locate, resting.side);
-        auto& level = side.at(resting.price);
-        level.total -= shares;
-        resting.remaining -= shares;
-        if (resting.remaining == 0) {
-            if (--level.orders == 0) {
-                side.erase(resting.price);
-            }
-            m_orders.erase({locate, order});
-        }
-    }
-    [[nodiscard]] order_book::Bbo bbo(std::uint16_t locate)
-    {
-        order_book::Bbo result;
-        if (const auto& bids = levels(locate, Side::Buy); !bids.empty()) {
-            result.bid =
-                Level{.price = bids.rbegin()->first, .quantity = bids.rbegin()->second.total};
-        }
-        if (const auto& asks = levels(locate, Side::Sell); !asks.empty()) {
-            result.ask =
-                Level{.price = asks.begin()->first, .quantity = asks.begin()->second.total};
-        }
-        return result;
-    }
-    [[nodiscard]] const auto& orders() const { return m_orders; }
-    [[nodiscard]] bool live(std::uint16_t locate, std::uint64_t order) const
-    {
-        return m_orders.contains({locate, order});
-    }
-
-private:
-    struct Resting {
-        Side side;
-        Price price;
-        Quantity remaining;
-    };
-    struct Total {
-        Quantity total = 0;
-        std::size_t orders = 0;
-    };
-    std::map<Price, Total>& levels(std::uint16_t locate, Side side)
-    {
-        return m_levels[{locate, side}];
-    }
-    std::map<std::pair<std::uint16_t, std::uint64_t>, Resting> m_orders;
-    std::map<std::pair<std::uint16_t, Side>, std::map<Price, Total>> m_levels;
-};
 
 // One random add, execution, replacement, or delete, applied to the market and the model, then
 // checked against the model's BBO before and after. Some adds and replacements take a reference
