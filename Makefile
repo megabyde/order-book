@@ -72,7 +72,7 @@ SANITIZE_STAMPS := \
 	$(STAMP_DIR)/sanitize-tsan.stamp
 FORMAT_SOURCES = $(shell find include src tests bench fuzz -type f \( -name '*.hpp' -o -name '*.cpp' \))
 CMAKE_FORMAT_SOURCES = CMakeLists.txt
-TIDY_SOURCES = $(shell find src tests bench -type f -name '*.cpp')
+TIDY_SOURCES = $(shell find src tests bench fuzz -type f -name '*.cpp')
 # Tracked Markdown/JSON/YAML only; conan.lock is Conan-generated, so its formatting is
 # Conan's, not prettier's.
 PRETTIER_SOURCES = $(shell git ls-files '*.md' '*.json' '*.yml' '*.yaml' ':!conan.lock')

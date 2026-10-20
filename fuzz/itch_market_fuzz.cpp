@@ -8,15 +8,15 @@
 
 #include "market_model.hpp"
 
-#include <fuzzer/FuzzedDataProvider.h>
-
 #include <algorithm>
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <expected>
 #include <limits>
+#include <span>
 
 namespace {
 
@@ -39,6 +39,10 @@ constexpr std::array<std::uint64_t, 10> references{
     std::numeric_limits<std::uint64_t>::max(),
 };
 
+constexpr std::uint32_t max_shares = 100;
+constexpr order_book::Price price_levels = 8;
+constexpr order_book::Price tick = 10;
+
 void check(bool condition)
 {
     if (!condition) {
@@ -46,17 +50,39 @@ void check(bool condition)
     }
 }
 
+// Reads the input front to back, one byte a value. An exhausted input reads as zeros.
+class Input {
+public:
+    explicit Input(std::span<const std::uint8_t> data) : m_data(data) {}
+
+    [[nodiscard]] bool empty() const { return m_data.empty(); }
+
+    // A value in [0, n), for n of at most 256
+    template <std::integral T> T below(T n)
+    {
+        if (m_data.empty()) {
+            return 0;
+        }
+        const auto value = m_data.front();
+        m_data = m_data.subspan(1);
+        return static_cast<T>(value % n);
+    }
+
+private:
+    std::span<const std::uint8_t> m_data;
+};
+
 class Session {
 public:
-    explicit Session(FuzzedDataProvider& input) : m_input(input) {}
+    explicit Session(Input& input) : m_input(input) {}
 
     void step()
     {
         ItchMessage message{};
-        message.locate = m_input.ConsumeIntegralInRange<std::uint16_t>(0, 3);
+        message.locate = m_input.below<std::uint16_t>(4);
         message.order = reference();
-        message.shares = m_input.ConsumeIntegralInRange<std::uint32_t>(0, 100);
-        message.price = m_input.ConsumeIntegralInRange<order_book::Price>(1, 8) * 10;
+        message.shares = m_input.below(max_shares + 1);
+        message.price = (m_input.below(price_levels) + 1) * tick;
         m_market.prefetch(message.order, message.locate);
         m_market.prefetch_levels(message.order, message.locate);
 
@@ -75,7 +101,7 @@ public:
     }
 
 private:
-    std::uint64_t reference() { return m_input.PickValueInArray(references); }
+    std::uint64_t reference() { return references.at(m_input.below(references.size())); }
 
     // Applies `message` to the model, filling in what the kind needs; the error the market must
     // report, if any
@@ -83,10 +109,10 @@ private:
     {
         const auto locate = message.locate;
         const auto order = message.order;
-        switch (m_input.ConsumeIntegralInRange(0, 3)) {
+        switch (m_input.below(4)) {
         case 0:
             message.kind = ItchKind::Add;
-            message.side = m_input.ConsumeBool() ? order_book::Side::Buy : order_book::Side::Sell;
+            message.side = m_input.below(2) == 0 ? order_book::Side::Buy : order_book::Side::Sell;
             if (m_model.live(locate, order)) {
                 return std::unexpected(BookError::DuplicateOrder);
             }
@@ -124,7 +150,7 @@ private:
         }
     }
 
-    FuzzedDataProvider& m_input;
+    Input& m_input;
     order_book::ItchMarket m_market;
     MarketModel m_model;
 };
@@ -133,9 +159,9 @@ private:
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
 {
-    FuzzedDataProvider input(data, size);
+    Input input({data, size});
     Session session(input);
-    while (input.remaining_bytes() > 0) {
+    while (!input.empty()) {
         session.step();
     }
     return 0;

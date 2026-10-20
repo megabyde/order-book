@@ -86,6 +86,11 @@ rest of the build because it turns off the tests and benchmarks, whose GoogleTes
 Benchmark binaries the default compiler built, and takes from the debug Conan toolchain only
 `unordered_dense`, which is header-only. It compiles at `-O1`.
 
+Other presets define each fuzzer as an object library outside `all`, so it is in the debug
+compilation database and `make lint` checks it; only the `fuzz` preset links the executables.
+`itch_market_fuzz` reads its input with a reader of its own, not LLVM's `FuzzedDataProvider`, whose
+header the clang-tidy that CI pins does not ship.
+
 The replay fuzzers' inputs stay within libFuzzer's length limit of a few KiB, so each fits in one
 1 MiB batch; records that straddle batches are left to the unit tests.
 
