@@ -23,6 +23,7 @@ jobs:
       CXX: ${{ matrix.compiler == 'gcc' && 'g++-14' || matrix.os == 'ubuntu-latest' && 'clang++-19' || 'clang++' }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 200M
+      CCACHE_FAMILY: ccache-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}
     strategy:
       fail-fast: false
       matrix:
@@ -69,13 +70,15 @@ jobs:
       # longer exist
       - name: Install ccache and mold
         run: ${{ runner.os == 'macOS' && 'brew install ccache' || 'sudo apt-get update && sudo apt-get install -y ccache mold' }}
-      # actions/cache saves only after an exact-key miss. The run_id suffix therefore saves an
-      # updated cache after every run, while restore-keys starts from the newest previous cache.
-      - uses: actions/cache@v6
+      # Every run starts from the newest ccache its family saved on main, and only pushes to main
+      # save one: a PR's cache is visible to that PR alone. "-run-" ends the family name, so the
+      # sanitize prefix does not also match sanitize-tsan. prune-ccache deletes the older entries.
+      - &restore-ccache
+        uses: actions/cache/restore@v6
         with:
           path: .ccache
-          key: ccache-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ github.run_id }}
-          restore-keys: ccache-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-
+          key: ${{ env.CCACHE_FAMILY }}-run-${{ github.run_id }}
+          restore-keys: ${{ env.CCACHE_FAMILY }}-run-
       - run: make lock-check
       - run: make bootstrap
       # The runner kernel randomizes mmap with more bits than the TSan runtime's fixed memory layout
@@ -86,6 +89,12 @@ jobs:
       - run: make ${{ matrix.preset }}
       - name: ccache stats
         run: ccache -sv
+      - &save-ccache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ${{ env.CCACHE_FAMILY }}-run-${{ github.run_id }}
       # Install the application to a throwaway prefix and replay the sample feed with it, verifying the
       # install() rule.
       - name: Verify install (release)
@@ -132,6 +141,7 @@ jobs:
       CXX: g++-14
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 200M
+      CCACHE_FAMILY: ccache-coverage
       GCOV_EXECUTABLE: gcov-14
     steps:
       - uses: actions/checkout@v7
@@ -145,15 +155,12 @@ jobs:
           path: ~/.conan2/p
           key: conan-${{ env.CONAN_VERSION }}-coverage-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
           restore-keys: conan-${{ env.CONAN_VERSION }}-coverage-${{ env.RUNNER_IMAGE }}-
-      - uses: actions/cache@v6
-        with:
-          path: .ccache
-          key: ccache-coverage-${{ github.run_id }}
-          restore-keys: ccache-coverage-
+      - *restore-ccache
       - run: python3 -m pip install --break-system-packages --user gcovr==${{ env.GCOVR_VERSION }}
       - run: make bootstrap
       # Builds, runs the suite, and fails if line coverage drops below the floor.
       - run: make coverage-report
+      - *save-ccache
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -170,6 +177,7 @@ jobs:
       CXX: clang++-19
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 200M
+      CCACHE_FAMILY: ccache-fuzz
     steps:
       - uses: actions/checkout@v7
       - *load-ci-env
@@ -183,17 +191,36 @@ jobs:
           path: ~/.conan2/p
           key: conan-${{ env.CONAN_VERSION }}-fuzz-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
           restore-keys: conan-${{ env.CONAN_VERSION }}-fuzz-${{ env.RUNNER_IMAGE }}-
-      - uses: actions/cache@v6
-        with:
-          path: .ccache
-          key: ccache-fuzz-${{ github.run_id }}
-          restore-keys: ccache-fuzz-
+      - *restore-ccache
       - run: make fuzz-run FUZZ_CC=clang-19 FUZZ_CXX=clang++-19
+      - *save-ccache
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: fuzz-crashes
           path: build/fuzz/crashes/
+
+  # Each push to main saves a new ccache per job family. Keeping only the newest of each, and deleting
+  # entries under any other key, holds the store well under GitHub's 10 GB, past which it evicts the
+  # least recently used caches, Conan's included. Deleting needs actions: write, so this job runs
+  # no project code.
+  prune-ccache:
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, coverage, fuzz]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - run: |
+          gh cache list --key ccache- --limit 1000 --json key,createdAt --jq '
+            (map(select(.key | test("-run-[0-9]+$") | not)) | .[].key),
+            (map(select(.key | test("-run-[0-9]+$")))
+              | group_by(.key | sub("-run-[0-9]+$"; ""))
+              | map(sort_by(.createdAt) | .[:-1]) | flatten | .[].key)' |
+            sort -u | while read -r key; do gh cache delete "$key"; done
 
   lint:
     runs-on: ubuntu-latest
