@@ -29,7 +29,7 @@ enum class Format : std::uint8_t {
 ///
 /// The input is read in batches of at least 1 MiB, several ahead of the output, so `in` should be a
 /// file or a stream that reaches its end: a producer that waits for output before writing more
-/// can stall. Uses one worker thread per hardware thread; see the overload taking `threads`.
+/// can stall. Uses the platform default worker count; see the overload taking `format`.
 std::size_t replay(std::istream& in, std::ostream& out);
 
 /// Replay as above with `threads` worker threads, at least 1
@@ -38,6 +38,12 @@ std::size_t replay(std::istream& in, std::ostream& out);
 /// reads the input and writes the output in line order, so the output and the exception do not
 /// depend on `threads`. A feed with fewer tickers than workers leaves the rest idle.
 std::size_t replay(std::istream& in, std::ostream& out, std::size_t threads);
+
+/// Replay a feed in `format` with the platform default worker count
+///
+/// Uses one worker per hardware thread, at least 1 and at most 8.
+/// The overload taking `threads` allows an explicit count.
+std::size_t replay(std::istream& in, std::ostream& out, Format format);
 
 /// Replay a feed in `format` with `threads` worker threads, at least 1
 ///

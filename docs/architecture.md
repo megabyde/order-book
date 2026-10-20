@@ -44,7 +44,11 @@ flight. A worker writes a line into its own buffer for each record that changes 
 the record's number. When all workers have finished a batch, the calling thread marks which worker,
 if any, wrote a line for each record, copies the lines out in record order, and writes the batch in
 one call. The output therefore does not depend on the thread count; the tests compare a one-thread
-replay with replays on up to eight threads for CSV and five for ITCH.
+replay with replays on up to 32 threads for both formats.
+
+Workers notify the shared condition variable when the last worker completes a batch.
+Queue insertion, completion, and shutdown notify every waiter; waking just one on completion could
+select a worker instead of the caller.
 
 A record that fails stops its worker, whose books are unusable after a failed apply. The batch's
 earliest failure across all workers ends the replay: the merge writes the lines before it, then
@@ -58,9 +62,10 @@ batches read so far are applied and written, and the exception is rethrown after
 their records failed first. The read runs inside `std::string::resize_and_overwrite()`, which must
 not see an exception, so the reader keeps the exception until the call returns.
 
-The default is one worker per hardware thread. The ITCH day is CPU-bound from 8 workers on an M1
-Max: total CPU time grows from 28.4 s on one thread to 37.7 s on eight, and the two efficiency cores
-add 3.3 s of CPU without making the run shorter.
+The CLI and `replay()` use one worker per hardware thread, at least one and at most eight.
+Explicit worker counts bypass the cap. The ITCH day is CPU-bound from 8 workers on an M1 Max:
+total CPU time grows from 28.4 s on one thread to 37.7 s on eight, and the two efficiency cores add
+3.3 s of CPU without making the run shorter.
 
 ## The CSV book
 
@@ -136,9 +141,10 @@ The worker prefetches. Applying a message is a chain of dependent loads, from th
 level to the book side, and a message is several hundred instructions, about as many as the core
 keeps in flight, so without help it waits for each miss in turn. Sixteen messages ahead, the worker
 reads the message's locate and reference number with `peek_itch()` and starts loading the order's
-index entry and the book; eight messages ahead, once those have arrived, it starts loading the
-order's level and the book's two best levels, which the BBO line reads. On one thread this took the
-day from 24.6–24.9 s to 20.6–20.8 s, and any distance from 8 to 64 ran within 4%.
+index entry and the book. Linux x86-64 stops at this stage. Other platforms also prefetch eight
+messages ahead, once those loads have arrived, to load the order's level and the book's two best
+levels, which the BBO line reads. On one thread on the M1 Max, the two stages took the day from
+24.6–24.9 s to 20.6–20.8 s, and any distance from 8 to 64 ran within 4%.
 
 ## Output
 

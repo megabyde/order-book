@@ -7,7 +7,6 @@
 #include <iostream>
 #include <span>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -47,7 +46,7 @@ int run(std::span<const char* const> args)
     }
 
     // Flushes std::cout and throws if that fails
-    order_book::replay(input, std::cout, format, std::thread::hardware_concurrency());
+    order_book::replay(input, std::cout, format);
     return 0;
 }
 
