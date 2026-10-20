@@ -24,6 +24,7 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 200M
       CCACHE_FAMILY: ccache-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}
+      CONAN_FAMILY: ${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}
     strategy:
       fail-fast: false
       matrix:
@@ -59,12 +60,15 @@ jobs:
           version: ${{ env.CONAN_VERSION }}
       # Conan packages follow from the key's inputs, so a run that hits the key has nothing to
       # save. The runner image is in the key because an image update can change the compiler,
-      # and with it every package ID, without changing any keyed file.
-      - uses: actions/cache@v6
+      # and with it every package ID, without changing any keyed file. As with ccache, only pushes
+      # to main save, so pull requests start from main's packages without storing their own.
+      - &restore-conan
+        id: conan
+        uses: actions/cache/restore@v6
         with:
           path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-${{ matrix.compiler }}-${{ matrix.preset }}-${{ env.RUNNER_IMAGE }}-
+          key: conan-${{ env.CONAN_VERSION }}-${{ env.CONAN_FAMILY }}-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
+          restore-keys: conan-${{ env.CONAN_VERSION }}-${{ env.CONAN_FAMILY }}-${{ env.RUNNER_IMAGE }}-
       # The Conan toolchain probes for mold only on Linux, so the macOS leg installs ccache alone.
       # Refresh apt metadata first because runner images can retain package lists whose versions no
       # longer exist
@@ -79,8 +83,19 @@ jobs:
           path: .ccache
           key: ${{ env.CCACHE_FAMILY }}-run-${{ github.run_id }}
           restore-keys: ${{ env.CCACHE_FAMILY }}-run-
+      # ccache keeps its statistics in the cache directory; zeroing them makes the stats step count
+      # this run alone
+      - run: ccache -z
       - run: make lock-check
       - run: make bootstrap
+      - &save-conan
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          steps.conan.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.conan2/p
+          key: ${{ steps.conan.outputs.cache-primary-key }}
       # The runner kernel randomizes mmap with more bits than the TSan runtime's fixed memory layout
       # allows, which aborts every instrumented test at startup.
       - name: Fit mmap randomization to TSan
@@ -112,19 +127,18 @@ jobs:
   windows:
     name: release / windows-latest / msvc
     runs-on: windows-latest
+    env:
+      CONAN_FAMILY: windows-msvc-release
     steps:
       - uses: actions/checkout@v7
       - *load-ci-env
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-      - uses: actions/cache@v6
-        with:
-          path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-windows-msvc-release-${{ env.RUNNER_IMAGE }}-
+      - *restore-conan
       - name: Install dependencies (release)
         run: conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
+      - *save-conan
       - name: Build and test (release preset)
         run: cmake --workflow --preset release
       - name: Verify install (release)
@@ -142,6 +156,7 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 200M
       CCACHE_FAMILY: ccache-coverage
+      CONAN_FAMILY: coverage
       GCOV_EXECUTABLE: gcov-14
     steps:
       - uses: actions/checkout@v7
@@ -150,14 +165,11 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-      - uses: actions/cache@v6
-        with:
-          path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-coverage-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-coverage-${{ env.RUNNER_IMAGE }}-
+      - *restore-conan
       - *restore-ccache
       - run: python3 -m pip install --break-system-packages --user gcovr==${{ env.GCOVR_VERSION }}
       - run: make bootstrap
+      - *save-conan
       # Builds, runs the suite, and fails if line coverage drops below the floor.
       - run: make coverage-report
       - *save-ccache
@@ -178,6 +190,7 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 200M
       CCACHE_FAMILY: ccache-fuzz
+      CONAN_FAMILY: fuzz
     steps:
       - uses: actions/checkout@v7
       - *load-ci-env
@@ -186,13 +199,10 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-      - uses: actions/cache@v6
-        with:
-          path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-fuzz-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-fuzz-${{ env.RUNNER_IMAGE }}-
+      - *restore-conan
       - *restore-ccache
       - run: make fuzz-run FUZZ_CC=clang-19 FUZZ_CXX=clang++-19
+      - *save-conan
       - *save-ccache
       - uses: actions/upload-artifact@v7
         if: failure()
@@ -227,17 +237,14 @@ jobs:
     env:
       CC: clang
       CXX: clang++
+      CONAN_FAMILY: lint
     steps:
       - uses: actions/checkout@v7
       - *load-ci-env
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-      - uses: actions/cache@v6
-        with:
-          path: ~/.conan2/p
-          key: conan-${{ env.CONAN_VERSION }}-lint-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
-          restore-keys: conan-${{ env.CONAN_VERSION }}-lint-${{ env.RUNNER_IMAGE }}-
+      - *restore-conan
       # ~/.local/bin precedes /usr/bin on the runner, so these shadow the image's
       # unpinned clang-format/clang-tidy.
       - name: Pin lint toolchain
@@ -254,5 +261,6 @@ jobs:
             prettier@${{ env.PRETTIER_VERSION }} \
             markdownlint-cli2@${{ env.MARKDOWNLINT_CLI2_VERSION }}
       - run: make bootstrap
+      - *save-conan
       - run: make format-check
       - run: make lint

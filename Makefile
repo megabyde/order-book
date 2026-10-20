@@ -44,6 +44,9 @@ endif
 # rather than reused from cache.
 # ---------------------------------------------------------------------------
 CONAN_PROFILE ?= profiles/default
+# One deploy folder per install: full_deploy names its folders by build type and architecture, which
+# the sanitizer installs share with debug
+CONAN_DEPLOY = --deployer=full_deploy --deployer-folder=build/deps/$(basename $(notdir $@))
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -101,7 +104,7 @@ $(STAMP_DIR)/release.stamp: BUILD_TYPE = Release
 $(STAMP_DIR)/debug.stamp $(STAMP_DIR)/release.stamp: conan.lock
 	echo "Installing Conan dependencies ($(BUILD_TYPE))..."
 	mkdir -p $(STAMP_DIR)
-	conan install . -pr=$(CONAN_PROFILE) -s="build_type=$(BUILD_TYPE)" --build=missing --lockfile=conan.lock
+	conan install . -pr=$(CONAN_PROFILE) -s="build_type=$(BUILD_TYPE)" --build=missing --lockfile=conan.lock $(CONAN_DEPLOY)
 	touch $@
 
 $(SANITIZE_STAMPS): $(STAMP_DIR)/%.stamp: conan.lock conan/settings_user.yml profiles/sanitize-common profiles/%
@@ -118,7 +121,7 @@ $(SANITIZE_STAMPS): $(STAMP_DIR)/%.stamp: conan.lock conan/settings_user.yml pro
 	elif ! python3 scripts/check_settings_subset.py conan/settings_user.yml "$$installed"; then \
 		$(DIE) "$$installed lacks sanitizer values this project needs (see above).\nMerge conan/settings_user.yml into it by hand, then rerun."; \
 	fi
-	conan install . -pr=profiles/$* --build=missing --lockfile=conan.lock
+	conan install . -pr=profiles/$* --build=missing --lockfile=conan.lock $(CONAN_DEPLOY)
 	touch $@
 
 # ---------------------------------------------------------------------------

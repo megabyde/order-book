@@ -28,7 +28,9 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-      - uses: actions/cache@v6
+      # Only pushes to main save the Conan cache; pull requests restore main's
+      - id: conan
+        uses: actions/cache/restore@v6
         with:
           path: ~/.conan2/p
           key: conan-${{ env.CONAN_VERSION }}-docs-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
@@ -45,6 +47,13 @@ jobs:
           curl -fsSL "https://github.com/doxygen/doxygen/releases/download/Release_${version//./_}/doxygen-${version}.linux.bin.tar.gz" | tar -xz
           echo "$PWD/doxygen-${version}/bin" >> "$GITHUB_PATH"
       - run: make docs
+      - if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          steps.conan.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.conan2/p
+          key: ${{ steps.conan.outputs.cache-primary-key }}
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
