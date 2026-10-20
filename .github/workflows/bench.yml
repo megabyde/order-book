@@ -47,7 +47,9 @@ jobs:
       - uses: conan-io/setup-conan@v1
         with:
           version: ${{ env.CONAN_VERSION }}
-      - uses: actions/cache@v6
+      # Only pushes to main save the Conan cache; pull requests restore main's
+      - id: conan
+        uses: actions/cache/restore@v6
         with:
           path: ~/.conan2/p
           key: conan-${{ env.CONAN_VERSION }}-${{ matrix.os }}-bench-${{ env.RUNNER_IMAGE }}-${{ hashFiles('conanfile.py', 'conan.lock', 'profiles/**', 'conan/**') }}
@@ -57,6 +59,13 @@ jobs:
           conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
           cmake --preset release
           cmake --build --preset release --target order_book_bench
+      - if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+          steps.conan.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.conan2/p
+          key: ${{ steps.conan.outputs.cache-primary-key }}
       # The same seeded feeds as make bench, and the deep one encoded as ITCH
       - name: Generate the feeds
         run: |
