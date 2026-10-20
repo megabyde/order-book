@@ -185,56 +185,6 @@ The suite is a Conan `test_requires` behind the `with_benchmarks` option, which 
 each benchmark as the `Bench.Smoke` test, so the suite cannot rot between measurements. Smoke
 timings are meaningless; take numbers from `make bench` on an idle machine.
 
-## Paired hillclimb measurements
-
-`scripts/hillclimb.py` compares the application CLI on Linux with Python 3.11+ and no extra Python
-packages. Generate synthetic CSV inputs with `scripts/gen_feed.py` and encode matching ITCH inputs
-with `scripts/csv_to_itch.py`. Check baseline outputs against `scripts/reference_bbo.py` before
-freezing an experiment. Keep release hardening, LTO, and warnings-as-errors options enabled.
-Check configure output and actual compile/link commands too: the toolchain probe can disable LTO
-even when its option is enabled. Record that outcome and keep it fixed across builds.
-
-```bash
-python3 scripts/hillclimb.py freeze --baseline build/release/order_book \
-  --manifest build/hillclimb/manifest.json \
-  --case target:long_csv:csv:build/hillclimb/long.csv \
-  --case target:long_itch:itch:build/hillclimb/long.itch \
-  --case guard:broad_csv:csv:build/hillclimb/broad.csv \
-  --case guard:broad_itch:itch:build/hillclimb/broad.itch \
-  --case guard:single_csv:csv:build/hillclimb/single.csv \
-  --case guard:single_itch:itch:build/hillclimb/single.itch
-python3 scripts/hillclimb.py run --manifest build/hillclimb/manifest.json \
-  --candidate build/release/order_book --out .audit/hillclimb/attempt-01
-python3 scripts/hillclimb.py profile --manifest build/hillclimb/manifest.json \
-  --candidate build/release/order_book --out .audit/hillclimb/profile-01
-```
-
-Freeze copies the baseline beside the manifest and seals input hashes, observed baseline output
-hashes/counts, harness identity, compiler identity/settings, release cache flags, generated Conan
-toolchain, and `conan.lock`. `--build-dir` defaults to `build/release`; `--timeout` defaults to 300
-seconds per process. Harness changes require a new experiment. Source and documentation edits do
-not change the frozen identity.
-
-Run validates complete output before eight alternating AB/BA pairs with timed stdout sent to
-`/dev/null`. Each result preserves commands, order, elapsed time, child CPU/context switches, and
-exit/timeout status. Input counts describe CSV rows excluding the header or ITCH frames, including
-metadata frames. Validation observes output lines/bytes; neither count claims applied events.
-Any failed process or changed identity fails the run and leaves raw observations without a score.
-Use a fresh output directory for every attempt; an experiment lock prevents overlapping runs and
-profiles. Freeze diagnostics are written beside the manifest as `*.freeze-result.json`.
-
-The target score is the geometric mean of target cases' candidate/reference median elapsed ratios.
-Guards are excluded. Paired target geometric ratios supply an exact one-sided sign test against 1;
-a metric win requires score below 1 and p at most 0.05. Every case above 1.05 requires investigation,
-and a paired regression p at most 0.05 confirms a regression. `eligible` additionally requires no
-case above 1.05. `--against PATH` compares an incumbent while preserving the original baseline.
-Final verification uses the original baseline; a score at most 0.75 alone does not establish the
-campaign requirement of at least ten real source attempts.
-
-Profile uses separate `perf record -e cpu-clock -g` and hardware-counter `perf stat` invocations;
-commands, perf version, failures, and artifacts remain separate from timing samples. Kernel perf
-permissions and available counters determine whether profiling succeeds.
-
 ## Public presets
 
 The main workflow presets are `debug`, `release`, `sanitize`, `sanitize-asan`, `sanitize-ubsan`,

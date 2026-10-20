@@ -381,6 +381,7 @@ public:
                 const auto ahead = peek_itch(bytes(mine + distance));
                 m_market.prefetch(ahead.order, ahead.locate);
             }
+// Level prefetch slowed the measured synthetic Linux x86-64 replay workload
 #if !defined(__linux__) || !defined(__x86_64__)
             if (mine + (distance / 2) < count) {
                 const auto ahead = peek_itch(bytes(mine + (distance / 2)));
@@ -679,12 +680,19 @@ std::size_t run(std::istream& in, std::ostream& out, std::size_t threads,
 
 std::size_t replay(std::istream& in, std::ostream& out)
 {
-    return replay(in, out, std::max(1U, std::thread::hardware_concurrency()));
+    return replay(in, out, Format::Csv);
 }
 
 std::size_t replay(std::istream& in, std::ostream& out, std::size_t threads)
 {
     return replay(in, out, Format::Csv, threads);
+}
+
+std::size_t replay(std::istream& in, std::ostream& out, Format format)
+{
+    constexpr auto max_workers = 8U;
+    const auto workers = std::clamp(std::thread::hardware_concurrency(), 1U, max_workers);
+    return replay(in, out, format, workers);
 }
 
 std::size_t replay(std::istream& in, std::ostream& out, Format format, std::size_t threads)

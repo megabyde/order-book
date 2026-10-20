@@ -97,7 +97,7 @@ Bbo ItchMarket::bbo(std::uint16_t locate) const
 std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
 {
     Order* resting = nullptr;
-    PageLiveCount* live = nullptr;
+    std::uint8_t* live = nullptr;
     if (message.order < paged_orders) {
         const auto chunk_index = message.order >> (page_bits + chunk_bits);
         if (chunk_index >= m_chunks.size()) {

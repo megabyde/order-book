@@ -46,33 +46,9 @@ if any, wrote a line for each record, copies the lines out in record order, and 
 one call. The output therefore does not depend on the thread count; the tests compare a one-thread
 replay with replays on up to 32 threads for both formats.
 
-Workers notify the shared condition variable only when the last worker completes a batch.
-An earlier completion changes neither the caller's completion predicate nor a worker's work
-predicate. Queue insertion and shutdown still notify every waiter. Completion also notifies every
-waiter because waking just one could select a worker instead of the caller.
-
-On Linux x86-64 with an Intel Core i9-13900, this reduced CSV replay's median elapsed time from
-1.021 s to 0.872 s, or 14.5%, across nine runs per build with alternating run order.
-The ranges were 0.883–1.088 s before and 0.837–1.095 s after. The two-sided exact rank-sum
-test gave p = 0.011. Median process CPU time fell from 8.514 s to 6.655 s, and voluntary context
-switches from 432,346 to 85,490. Profiling found futex contention before the change.
-Parsing, book updates, and output merging remain work that this change does not reduce.
-
-These measurements used GCC 15.2.0, `-O3`, hardening, and the default 32 workers on both
-builds. LTO was requested but disabled by the existing GCC/lld compatibility probe on both builds.
-The input was eight copies of the generated 4M-event deep feed, with only the first CSV
-header retained. Each copy ends with empty books, so concatenation preserves valid order lifetimes.
-The CLI read warm files and wrote to `/dev/null`; separate untimed runs verified identical output
-hashes and 8,497,112 output lines. Desktop processes remained active during measurement.
-ITCH encoded from the same feed also produced identical output and fewer context switches, but its
-elapsed-time difference was inconclusive. A separate `-march=native` trial showed no consistent
-gain, so the release build retains generic x86-64 code generation. Synthetic feeds do not establish
-performance on a real trading-day capture.
-
-A subsequent source-only [Linux x86 hillclimb](performance-x86.md) compared against this
-post-wakeup baseline. Eighteen attempts retained the eight-worker CLI cap, one-stage ITCH
-prefetch, and 256-order ITCH pages. Combined CSV/ITCH elapsed time fell 21.9%; the 25% target
-was not reached. The report includes raw timings, guard workloads, and the page-size memory cost.
+Workers notify the shared condition variable when the last worker completes a batch.
+Queue insertion, completion, and shutdown notify every waiter; waking just one on completion could
+select a worker instead of the caller.
 
 A record that fails stops its worker, whose books are unusable after a failed apply. The batch's
 earliest failure across all workers ends the replay: the merge writes the lines before it, then
@@ -86,8 +62,8 @@ batches read so far are applied and written, and the exception is rethrown after
 their records failed first. The read runs inside `std::string::resize_and_overwrite()`, which must
 not see an exception, so the reader keeps the exception until the call returns.
 
-The CLI uses one worker per hardware thread, capped at eight on Linux x86-64. `replay()` keeps its
-explicit worker count and default unchanged. The ITCH day is CPU-bound from 8 workers on an M1 Max:
+The CLI and `replay()` use one worker per hardware thread, at least one and at most eight.
+Explicit worker counts bypass the cap. The ITCH day is CPU-bound from 8 workers on an M1 Max:
 total CPU time grows from 28.4 s on one thread to 37.7 s on eight, and the two efficiency cores add
 3.3 s of CPU without making the run shorter.
 
@@ -136,11 +112,10 @@ Written as one function, the compiler kept `add()` out of line once both books c
 Decoding is a single dispatch: `visit_itch()` reads the type byte and calls the handler method for
 the message's kind with the decoded fields, so the replay looks at the type once.
 
-Orders live in an index of pages by reference number. A page holds 256 consecutive reference
-numbers on Linux x86-64 and 128 elsewhere. Each order takes 8 bytes for its remaining shares and
-the handle of its level. A two-level directory finds the page, made only for the ranges in use,
-so one reference number near 2^32 costs one directory chunk rather than a table in every worker.
-Nasdaq assigns reference numbers
+Orders live in an index of pages by reference number. A page holds the orders of 128 consecutive
+reference numbers, 8 bytes each: the order's remaining shares and the handle of its level. A
+two-level directory finds the page, made only for the ranges in use, so one reference number near
+2^32 costs one directory chunk rather than a table in every worker. Nasdaq assigns reference numbers
 in sequence within each of several ranges at once, so the recent orders most messages name sit in a
 few pages that stay in cache.
 
@@ -166,7 +141,7 @@ The worker prefetches. Applying a message is a chain of dependent loads, from th
 level to the book side, and a message is several hundred instructions, about as many as the core
 keeps in flight, so without help it waits for each miss in turn. Sixteen messages ahead, the worker
 reads the message's locate and reference number with `peek_itch()` and starts loading the order's
-index entry and the book. Linux x86_64 stops at this stage. Other platforms also prefetch eight
+index entry and the book. Linux x86-64 stops at this stage. Other platforms also prefetch eight
 messages ahead, once those loads have arrived, to load the order's level and the book's two best
 levels, which the BBO line reads. On one thread on the M1 Max, the two stages took the day from
 24.6–24.9 s to 20.6–20.8 s, and any distance from 8 to 64 ran within 4%.
@@ -228,8 +203,7 @@ Several ideas lost when measured, and are not in the code:
 The ITCH market's memory is mostly pages. Each worker keeps only its own locates, so its orders are
 a sparse subset of every range of reference numbers, and the few long-lived orders left in a range
 keep its pages alive all day: at its peak, one market on the real day held 1.9M live orders in pages
-of 256 reference numbers about 2% full. On the M1 Max, pages of 128 reference numbers, exactly 1 KiB
-because their live counts sit in the directory, kept the application's peak at 1.11 GB with all
-threads, against 1.90 GB with 256 and the count inside the page. The macOS allocator rounded those
-2,052-byte pages up to 2,560 bytes. Linux x86-64 uses 256-reference, 2 KiB pages with 16-bit live
-counts in the directory. Other platforms keep 128-reference pages and 8-bit counts.
+of 256 reference numbers about 2% full. Pages of 128 reference numbers, exactly 1 KiB because their
+live counts sit in the directory, keep the application's peak at 1.11 GB with all threads, against
+1.90 GB with 256 and the count inside the page, which the macOS allocator rounded up from 2,052 to
+2,560 bytes.

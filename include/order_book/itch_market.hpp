@@ -6,7 +6,6 @@
 #include <expected>
 #include <limits>
 #include <memory>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -76,18 +75,19 @@ private:
         std::uint32_t remaining;
         std::uint32_t level;
     };
+    // Reference numbers below this live in the index, and larger ones in m_overflow. Nasdaq starts
+    // them low each day: the largest on 2019-12-30 is 308,631,072. The bound keeps m_chunks within
+    // 2^16 entries, so a larger reference number's chunk is past its end and lookups need no check.
     static constexpr std::uint64_t paged_orders = std::uint64_t{1} << 32U;
-#if defined(__linux__) && defined(__x86_64__)
-    static constexpr unsigned page_bits = 8;
-#else
+    // Small pages, because each worker keeps only the locates assigned to it, so its orders are a
+    // sparse subset of every range of reference numbers, and long-lived orders keep pages alive. On
+    // the 2019-12-30 day, 128 reference numbers a page gave the lowest peak with ten workers:
+    // smaller pages need more of the directory, which every worker keeps for every range it uses.
     static constexpr unsigned page_bits = 7;
-#endif
     static constexpr std::size_t page_size = std::size_t{1} << page_bits;
-    // Keep the live count outside the page to avoid allocator rounding on macOS.
+    // The orders of page_size consecutive reference numbers, exactly 1 KiB: with its live count
+    // beside the orders, the allocator would round a page up by a quarter
     using Page = std::array<Order, page_size>;
-    static constexpr auto max_small_page_size = std::numeric_limits<std::uint8_t>::max();
-    using PageLiveCount =
-        std::conditional_t<(page_size <= max_small_page_size), std::uint8_t, std::uint16_t>;
     // The pages of chunk_size consecutive page numbers, and how many live orders each holds. The
     // index makes a chunk only for a page it uses, so a high reference number costs one chunk
     // rather than a slot for every page below it.
@@ -95,9 +95,9 @@ private:
     static constexpr std::size_t chunk_size = std::size_t{1} << chunk_bits;
     struct Chunk {
         std::array<std::unique_ptr<Page>, chunk_size> pages;
-        std::array<PageLiveCount, chunk_size> live{};
+        std::array<std::uint8_t, chunk_size> live{};
     };
-    static_assert(page_size <= std::numeric_limits<PageLiveCount>::max());
+    static_assert(page_size <= std::numeric_limits<std::uint8_t>::max());
 
     // Take `quantity` off `resting`, the order `order`, removing it and then its level once they
     // reach 0; returns whether its book's best bid or offer changed. Removing an order of

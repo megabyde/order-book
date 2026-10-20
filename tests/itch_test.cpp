@@ -459,20 +459,20 @@ TEST(ItchMarketTest, ReusesEmptiedPagesAndSlots)
 
 testing::AssertionResult fill_and_empty_first_page(ItchMarket& market)
 {
-    for (std::uint64_t order = 0; order < 256; ++order) {
+    for (std::uint64_t order = 0; order < 128; ++order) {
         if (market.apply(add_message(1, order, Side::Sell, 1000, 1)) != true) {
             return testing::AssertionFailure() << "add " << order;
         }
     }
-    if (market.order_count() != 256 ||
-        market.bbo(1) != bbo({}, Level{.price = 1000, .quantity = 256})) {
+    if (market.order_count() != 128 ||
+        market.bbo(1) != bbo({}, Level{.price = 1000, .quantity = 128})) {
         return testing::AssertionFailure() << "full page has wrong count or BBO";
     }
     if (market.apply(order_message(ItchKind::Delete, 1, 0)) != true ||
         market.apply(add_message(1, 0, Side::Sell, 1000, 1)) != true) {
         return testing::AssertionFailure() << "remove and readd order 0";
     }
-    for (std::uint64_t order = 0; order < 256; ++order) {
+    for (std::uint64_t order = 0; order < 128; ++order) {
         if (market.apply(order_message(ItchKind::Delete, 1, order)) != true) {
             return testing::AssertionFailure() << "delete " << order;
         }
@@ -487,7 +487,7 @@ TEST(ItchMarketTest, FillsAndReusesThePageStartingAtZero)
     EXPECT_EQ(market.order_count(), 0U);
     EXPECT_EQ(market.level_count(), 0U);
     EXPECT_EQ(market.bbo(1), bbo({}, {}));
-    EXPECT_EQ(market.apply(add_message(2, 256, Side::Buy, 990, 7)), true);
+    EXPECT_EQ(market.apply(add_message(2, 128, Side::Buy, 990, 7)), true);
     EXPECT_EQ(market.apply(order_message(ItchKind::Delete, 1, 0)),
               std::unexpected(BookError::UnknownOrder));
     EXPECT_EQ(market.bbo(2), bbo(Level{990, 7}, {}));
@@ -847,6 +847,10 @@ TEST(ItchReplayTest, OutputDoesNotDependOnThreads)
         replay_itch(feed, output, threads);
         EXPECT_EQ(output, single) << "threads " << threads;
     }
+    std::istringstream in(feed);
+    std::ostringstream out;
+    EXPECT_EQ(order_book::replay(in, out, Format::Itch), 20'000U);
+    EXPECT_EQ(out.str(), single);
 }
 
 TEST(ItchReplayTest, KeepsReferenceNumbersPerLocate)
