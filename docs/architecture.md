@@ -37,7 +37,11 @@ the calling thread splits each batch into lines, skips the header and blank line
 worker the list of its own. ITCH messages go to the worker their stock locate selects, and there the
 calling thread only frames them: every worker scans the batch's message starts and keeps the ones
 whose locate is its own, without a branch per message, since most messages belong to another worker.
-A message too short to name a locate goes to worker 0, which reports it.
+A message too short to name a locate goes to worker 0, which reports it. A multiplicative hash of the
+locate picks the worker: on the real day, the locate modulo 8 gave the busiest worker 23% more book
+messages than the mean, worse than 94% of random assignments, and the hash gives it 13%, about their
+median. With the 16-byte level records below, five interleaved rounds on a quiet machine ran the day
+in 4.61–4.75 s instead of 4.68–4.73 s, with 1.3% less CPU and 1.6% fewer cycles.
 
 Every worker applies every batch in order, so the workers drift apart by at most the four batches in
 flight. A worker writes a line into its own buffer for each record that changes a BBO, tagged with
@@ -65,13 +69,17 @@ not see an exception, so the reader keeps the exception until the call returns.
 The CLI and `replay()` use one worker per hardware thread, at least one and at most eight.
 Explicit worker counts bypass the cap. The ITCH day is CPU-bound from 8 workers on an M1 Max:
 total CPU time grows from 28.4 s on one thread to 37.7 s on eight, and the two efficiency cores add
-3.3 s of CPU without making the run shorter.
+3.3 s of CPU without making the run shorter. Fewer workers trade time for CPU at a steady rate, with
+no count that saves CPU for free: at best of four rounds, 4 workers took 6.96 s and 30.8 s of CPU, 6
+took 5.25 s and 33.6 s, and 8 took 4.56 s and 37.4 s. Of the extra cycles at 8 workers, about 40% is
+the cost of splitting the books, the scan and sparser pages, measured by running one worker's share
+alone, and the rest is the workers slowing each other down through the shared caches and memory.
 
 ## The CSV book
 
 `OrderBook` keeps one ticker's book with string order IDs, as the CSV format gives them. A level is
-a pooled record with its total, price, order count, and side, and each side is a vector of prices and
-level handles, worst first, so the best level is the last element and a change to it is a change to
+a pooled record with its total, order count, and side, and each side is a vector of prices and level
+handles, worst first, so the best level is the last element and a change to it is a change to
 the BBO. Finding a price scans from the best end, where most adds and removals happen. Orders live
 in an `ankerl::unordered_dense::map` from order ID to the order's remaining quantity and its level's
 handle, so an execution or delete reaches the level without a search. The map keeps its entries in
@@ -119,10 +127,12 @@ two-level directory finds the page, made only for the ranges in use, so one refe
 in sequence within each of several ranges at once, so the recent orders most messages name sit in a
 few pages that stay in cache.
 
-A level is a pooled 24-byte record with its total, price, order count, locate, and side, so an
-execution or delete reaches it from the order without a search. Each side of a book is a vector of
-prices and handles, worst first: the best level is the last element, and most adds and removals
-touch only the end of the vector.
+A level is a pooled 16-byte record with its total, order count, locate, and side, so an execution
+or delete reaches it from the order without a search. Each side of a book is a vector of prices and
+handles, worst first: the best level is the last element, and most adds and removals touch only the
+end of the vector. The price is kept only there: removing a level below the best finds its entry by
+handle, scanning from the end as a search by price would, so the record fits four to a cache line
+instead of 24 bytes with a copy of the price.
 
 Each book keeps its own reference numbers, as a CSV book keeps its order IDs, so which locates share
 a worker cannot change what a feed means. An order whose reference number another locate's live
@@ -193,7 +203,12 @@ Several ideas lost when measured, and are not in the code:
 - Sorted vectors with binary search for the CSV levels were 12% slower on a shallow feed and no
   faster on ITCH.
 - A pool that hands shards of locates to whichever thread is free ran no faster with one shard per
-  thread and used 3–8 s more CPU with two or four, since the day is CPU-bound, not unbalanced.
+  thread and used 3–8 s more CPU with two or four, since the day is CPU-bound.
+- Merging and writing on a writer thread, so the calling thread only reads and frames, ran the day in
+  4.56–4.64 s with 37.7 s of CPU, the same as before.
+- Recording each message's worker while framing, so the workers skip the scan, cut 11.5% of
+  instructions but slowed the run to 4.78–4.80 s from 4.56–4.58 s, because the calling thread then
+  set the pace. With the writer thread as well, it was within noise of the code before.
 - Moving the orders of sparse old pages into the hash map cut memory about as much as smaller
   pages do, but Nasdaq's concurrent ranges of reference numbers kept sending adds back to evicted
   pages, and one thread ran twice as slow.

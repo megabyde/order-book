@@ -342,6 +342,23 @@ private:
     ankerl::unordered_dense::map<std::string, OrderBook, StringHash, std::equal_to<>> m_books;
 };
 
+// The worker of stock locate `locate`. A locate's number says nothing about its volume, so the
+// split balances only on average; hashing the number keeps the workers' shares from following any
+// pattern in how the exchange numbers its locates, as a remainder would.
+// A locate and a worker count, which the check sees as swappable
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+std::size_t owner(std::size_t locate, std::size_t workers)
+{
+    // Knuth's multiplicative hashing (TAOCP vol. 3, 6.4): the multiplier is the prime nearest 2^32
+    // divided by the golden ratio, so the 32-bit product spreads consecutive locates apart
+    constexpr std::uint32_t multiplier = 0x9E3779B1U;
+    // The hash read as a fraction of 2^32, times the worker count: the product's high 32 bits are
+    // the worker, each taking an equal slice of the hash's range, without a division
+    constexpr unsigned hash_bits = 32;
+    const auto hash = static_cast<std::uint32_t>(locate) * multiplier;
+    return static_cast<std::size_t>((std::uint64_t{hash} * workers) >> hash_bits);
+}
+
 // Keeps the books of the stock locates whose messages it is given
 class ItchWorker {
 public:
@@ -358,7 +375,7 @@ public:
         for (std::size_t record = 0; record < batch.starts.size(); ++record) {
             const auto* const message = text + batch.starts[record];
             const auto worker = workers > 1 && message_length(message) > length_size
-                                    ? message_length(message + length_size + 1) % workers
+                                    ? owner(message_length(message + length_size + 1), workers)
                                     : 0;
             m_mine[count] = static_cast<std::uint32_t>(record);
             count += worker == index ? 1 : 0;

@@ -28,7 +28,6 @@ struct Bbo {
 /// The orders resting at one price: their total, their count, and the book and side they are in
 struct LevelRecord {
     Quantity total;       ///< Sum of the remaining quantity of the level's orders
-    Price price;          ///< Level price
     std::uint32_t orders; ///< Number of orders at the level
     std::uint16_t locate; ///< Book the level belongs to, where a pool serves several; 0 otherwise
     Side side;            ///< Side the level is on
@@ -130,8 +129,13 @@ inline bool LevelPool::reduce(BookLevels& book, std::uint32_t level, Quantity qu
             levels.pop_back();
         }
         else {
-            const auto index = position(levels, record.side, record.price);
-            levels.erase(levels.begin() + static_cast<std::ptrdiff_t>(index - 1));
+            // Found by handle from the end, which takes as many steps as position() would, so the
+            // record needs no copy of the price
+            auto index = levels.size() - 2;
+            while (levels[index].level != level) {
+                --index;
+            }
+            levels.erase(levels.begin() + static_cast<std::ptrdiff_t>(index));
         }
         m_free.push_back(level);
     }

@@ -21,7 +21,6 @@ LevelPool::Added LevelPool::create(std::vector<LevelEntry>& levels, std::size_t 
     }
     m_records[handle] = LevelRecord{
         .total = order.shares,
-        .price = order.price,
         .orders = 1,
         .locate = locate,
         .side = order.side,
