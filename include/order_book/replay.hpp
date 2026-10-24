@@ -39,10 +39,12 @@ std::size_t replay(std::istream& in, std::ostream& out);
 /// depend on `threads`. A feed with fewer tickers than workers leaves the rest idle.
 std::size_t replay(std::istream& in, std::ostream& out, std::size_t threads);
 
-/// Replay a feed in `format` with the platform default worker count
+/// The platform default worker count: one per hardware thread, at least 1 and at most 8
+std::size_t default_threads();
+
+/// Replay a feed in `format` with default_threads() workers
 ///
-/// Uses one worker per hardware thread, at least 1 and at most 8.
-/// The overload taking `threads` allows an explicit count.
+/// The overload taking `threads` allows an explicit count, which the cap does not limit.
 std::size_t replay(std::istream& in, std::ostream& out, Format format);
 
 /// Replay a feed in `format` with `threads` worker threads, at least 1

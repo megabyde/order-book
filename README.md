@@ -15,6 +15,25 @@ offer (BBO) of a ticker each time it changes. It reads the CSV format below or N
 5.0. It keeps one book per ticker: each side is a sorted set of price levels, and each level holds
 the total quantity of its orders.
 
+### Usage
+
+```text
+order_book [--format=csv|itch] [--threads=N] [--stats] FILE
+```
+
+`FILE` is the feed, or `-` for standard input, so a compressed capture replays without being
+decompressed to disk:
+
+```bash
+gzip -dc 12302019.NASDAQ_ITCH50.gz | order_book --format=itch - > bbo.csv
+```
+
+`--threads` sets the number of worker threads, from 1 to 1024; the default is one per hardware
+thread, at most 8. `--stats` prints the events applied, the BBO lines written, the worker count, and
+the elapsed seconds to stderr once a replay succeeds. Counting the lines takes a pass over the
+output, about a second of CPU on the ITCH day. `--help` and `--version` print to stdout and exit
+with 0.
+
 ### Input
 
 A CSV file with a header line, then one event per line:
@@ -44,8 +63,8 @@ opposite side again would count every fill twice.
 ### ITCH input
 
 `order_book --format=itch FILE` reads Nasdaq TotalView-ITCH 5.0 instead: the uncompressed binary
-file Nasdaq publishes, in which each message follows its 2-byte big-endian length. Decompress a
-`.gz` capture first. The default is `--format=csv`.
+file Nasdaq publishes, in which each message follows its 2-byte big-endian length. A `.gz` capture
+has to be decompressed, to a file or through a pipe into `-`. The default is `--format=csv`.
 
 | ITCH message   | Effect on the order it names                                            |
 | -------------- | ----------------------------------------------------------------------- |
@@ -79,13 +98,15 @@ best level, a trade, or a `C` that does not decrease the order.
 The replay stops at the first line it cannot apply and prints `error: line N: <reason>` to stderr
 with exit status 1; the lines before it have already been printed. A line fails on a malformed or
 out-of-range field, an unknown message type, an add that reuses a live order ID, or a `C`, `D`, `E`,
-or `F` that names no live order. A file that cannot be opened also exits with 1, and a wrong argument
-count or an unknown `--format` prints the reason to stderr and exits with 2.
+or `F` that names no live order. A file that cannot be opened also exits with 1. A usage error, such
+as a missing or extra argument, an unknown `--format`, or a `--threads` outside 1 to 1024, prints
+`error: <reason>` to stderr and exits with 2.
 
 Any other failure prints `error: <reason>` and exits with 1, after the output before it: output that
 cannot be written, down to the final flush, so status 0 means every line reached stdout; memory or
-threads that run out; and a read error, which libstdc++ reports. Built with libc++ or MSVC's library,
-the file stream reports a read error as the end of the file, and the replay ends there. On POSIX,
+threads that run out; and a read error, which standard input reports everywhere and a file only
+with libstdc++. Built with libc++ or MSVC's library, the file stream reports a read error as the end
+of the file, and the replay ends there. On POSIX,
 output into a pipe whose reader has exited ends the program with `SIGPIPE` instead, as it ends `cat`
 or `grep`.
 
@@ -125,7 +146,8 @@ the measurements behind each choice. The library in `include/order_book/` has si
   hardware thread by default, each keep the books of the tickers that hash to them, or of the stock
   locates assigned to them for ITCH, whose messages each worker picks out of every batch itself, and
   the calling thread merges their output back into input order, so the output does not depend on the
-  thread count. The application opens the file and calls it, and so does the replay benchmark.
+  thread count. The application parses its options with CLI11, opens the file or standard input,
+  and calls it, and so does the replay benchmark.
 
 This repository uses:
 
@@ -133,6 +155,7 @@ This repository uses:
 - [Conan 2](https://conan.io) for dependency management
 - [unordered_dense](https://github.com/martinus/unordered_dense) via Conan for the CSV book's hash
   maps
+- [CLI11](https://github.com/CLIUtils/CLI11) via Conan for the application's options
 - [GoogleTest](https://github.com/google/googletest) and
   [Google Benchmark](https://github.com/google/benchmark) via Conan
 - [Doxygen](https://www.doxygen.nl) for generated API documentation

@@ -178,9 +178,10 @@ configure_file(
     ${PROJECT_BINARY_DIR}/generated/order_book/version.hpp @ONLY
 )
 
+find_package(CLI11 CONFIG REQUIRED)
 add_executable(order_book src/main.cpp)
 target_include_directories(order_book PRIVATE ${PROJECT_BINARY_DIR}/generated)
-target_link_libraries(order_book PRIVATE order_book_lib)
+target_link_libraries(order_book PRIVATE order_book_lib CLI11::CLI11)
 enable_project_options(order_book)
 
 # Install only the application binary. The static library is an internal build artifact, not a
@@ -246,25 +247,49 @@ if(BUILD_TESTING)
                     "-DPATTERN=${pattern}" -P ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
         )
     endfunction()
-    add_app_error_test(PrintsUsage 2 "Usage: .* \\[--format=csv\\|itch\\] FILE")
+    add_app_error_test(RequiresFile 2 "error: FILE is required")
     add_test(
-        NAME AppTest.PrintsUsageForTwoFiles
+        NAME AppTest.RejectsTwoFiles
         COMMAND
             ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=first.csv -DINPUT=second.csv
-            -DEXIT=2 "-DPATTERN=Usage: " -P ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+            -DEXIT=2 "-DPATTERN=error: .*not expected: second.csv" -P
+            ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
     )
     add_test(
         NAME AppTest.RejectsUnknownFormat
         COMMAND
             ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=--format=xml
             -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv -DEXIT=2
-            "-DPATTERN=error: unknown format 'xml'; expected csv or itch" -P
+            "-DPATTERN=error: --format: unknown format 'xml'; expected csv or itch" -P
             ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
     )
     add_app_error_test(
         RejectsMissingFile 1 "error: cannot open '.*missing.csv'" ${PROJECT_BINARY_DIR}/missing.csv
     )
-    # Closing the application's standard output takes a POSIX shell
+    add_test(
+        NAME AppTest.RejectsZeroThreads
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=--threads=0
+            -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv -DEXIT=2
+            "-DPATTERN=error: --threads: Value 0 not in range \\[1 - 1024\\]" -P
+            ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+    )
+    add_test(
+        NAME AppTest.PrintsHelp
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=--help -DEXIT=0 -DPATTERN=^$
+            "-DSTDOUT_PATTERN=order_book \\[OPTIONS\\] FILE.*--format.*--threads.*--stats" -P
+            ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+    )
+    add_test(
+        NAME AppTest.PrintsVersion
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DOPTION=--version -DEXIT=0
+            -DPATTERN=^$ "-DSTDOUT_PATTERN=^${PROJECT_VERSION}\n$" -P
+            ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+    )
+    # Closing the application's standard output, or reading a directory as its input, takes a POSIX
+    # shell
     if(NOT WIN32)
         add_test(
             NAME AppTest.ReportsClosedOutput
@@ -272,6 +297,13 @@ if(BUILD_TESTING)
                 ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DCLOSED_STDOUT=ON
                 -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv -DEXIT=1
                 "-DPATTERN=error: cannot write the output" -P
+                ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
+        )
+        add_test(
+            NAME AppTest.ReportsStdinReadError
+            COMMAND
+                ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DSTDIN_FROM=${PROJECT_SOURCE_DIR}
+                -DINPUT=- -DEXIT=1 "-DPATTERN=error: cannot read the input" -P
                 ${PROJECT_SOURCE_DIR}/tests/expect_error.cmake
         )
     endif()
@@ -314,6 +346,17 @@ if(BUILD_TESTING)
             -DACTUAL=${PROJECT_BINARY_DIR}/sample_flag.actual -P
             ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
     )
+    # Three workers on the sample's tickers, from standard input, with the counts on stderr
+    add_test(
+        NAME AppTest.ReplaysSampleFromStdinWithStats
+        COMMAND
+            ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> "-DOPTION=--threads=3;--stats"
+            -DSTDIN=ON -DINPUT=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
+            -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/sample.expected
+            -DACTUAL=${PROJECT_BINARY_DIR}/sample_stdin.actual
+            "-DSTDERR_PATTERN=^16 events, 12 lines, 3 threads, [0-9]+\\.[0-9]+ s\n$" -P
+            ${PROJECT_SOURCE_DIR}/tests/compare_output.cmake
+    )
 
     # Differential tests against the independent Python model of the feed semantics. Skipped when no
     # Python interpreter is found; the scripts need only the standard library.
@@ -344,6 +387,17 @@ if(BUILD_TESTING)
                 -DCSV=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
                 -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/sample.expected
                 -DWORK=${PROJECT_BINARY_DIR}/sample_itch -P
+                ${PROJECT_SOURCE_DIR}/tests/replay_itch.cmake
+        )
+        # Binary ITCH through standard input, which Windows opens in text mode
+        add_test(
+            NAME AppTest.ReplaysSampleItchFromStdin
+            COMMAND
+                ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:order_book> -DPYTHON=${Python3_EXECUTABLE}
+                -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -DSTDIN=ON
+                -DCSV=${PROJECT_SOURCE_DIR}/tests/data/sample.csv
+                -DEXPECTED=${PROJECT_SOURCE_DIR}/tests/data/sample.expected
+                -DWORK=${PROJECT_BINARY_DIR}/sample_itch_stdin -P
                 ${PROJECT_SOURCE_DIR}/tests/replay_itch.cmake
         )
         # The encoder rejects what the replay rejects, rather than encoding a row as some other type

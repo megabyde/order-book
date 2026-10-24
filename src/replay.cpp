@@ -740,11 +740,15 @@ std::size_t replay(std::istream& in, std::ostream& out, std::size_t threads)
     return replay(in, out, Format::Csv, threads);
 }
 
-std::size_t replay(std::istream& in, std::ostream& out, Format format)
+std::size_t default_threads()
 {
     constexpr auto max_workers = 8U;
-    const auto workers = std::clamp(std::thread::hardware_concurrency(), 1U, max_workers);
-    return replay(in, out, format, workers);
+    return std::clamp(std::thread::hardware_concurrency(), 1U, max_workers);
+}
+
+std::size_t replay(std::istream& in, std::ostream& out, Format format)
+{
+    return replay(in, out, format, default_threads());
 }
 
 std::size_t replay(std::istream& in, std::ostream& out, Format format, std::size_t threads)
