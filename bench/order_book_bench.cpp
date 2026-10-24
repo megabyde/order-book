@@ -111,17 +111,23 @@ void BM_ExecuteFront(benchmark::State& state)
 }
 BENCHMARK(BM_ExecuteFront)->Range(64, 4096);
 
-// The whole file at `path`, or nothing after skipping `state` with the reason
+// The whole file at `path`, or nothing after skipping `state` with the reason. Read in one call
+// into a string of the file's size, since a real day is several GB and a growing buffer would
+// briefly hold it twice.
 std::optional<std::string> read_feed(benchmark::State& state, const std::string& path)
 {
-    const std::ifstream file(path, std::ios::binary);
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
         state.SkipWithError("cannot open '" + path + "'");
         return std::nullopt;
     }
-    std::stringstream contents;
-    contents << file.rdbuf();
-    return std::move(contents).str();
+    std::string contents(static_cast<std::size_t>(file.tellg()), '\0');
+    file.seekg(0);
+    if (!file.read(contents.data(), static_cast<std::streamsize>(contents.size()))) {
+        state.SkipWithError("cannot read '" + path + "'");
+        return std::nullopt;
+    }
+    return contents;
 }
 
 // Replays the feed at `path` in `format` with range(0) worker threads through the entry point the
@@ -129,12 +135,14 @@ std::optional<std::string> read_feed(benchmark::State& state, const std::string&
 void BM_Replay(benchmark::State& state, const std::string& path, order_book::Format format)
 {
     const auto threads = static_cast<std::size_t>(state.range(0));
-    const auto feed = read_feed(state, path);
+    auto feed = read_feed(state, path);
     if (!feed) {
         return;
     }
+    const auto bytes = static_cast<int64_t>(feed->size());
 
-    std::istringstream in(*feed);
+    // The stream takes the feed rather than copying it, which for a real day saves several GB
+    std::istringstream in(std::move(*feed));
     NullBuffer sink;
     std::ostream out(&sink);
     // An untimed first pass rejects a malformed feed and counts its events
@@ -152,7 +160,7 @@ void BM_Replay(benchmark::State& state, const std::string& path, order_book::For
         order_book::replay(in, out, format, threads);
     }
     state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(events));
-    state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(feed->size()));
+    state.SetBytesProcessed(state.iterations() * bytes);
 }
 
 // Offset of the ITCH message after the one whose 2-byte length is at `offset` in `feed`
@@ -242,10 +250,12 @@ std::optional<std::string> apply_itch(std::string_view feed, order_book::ItchMar
             market.prefetch(peeked.order, peeked.locate);
             ahead = next_message(feed, ahead);
         }
-        if (half < feed.size()) {
-            const auto peeked = order_book::peek_itch(message_at(feed, half));
-            market.prefetch_levels(peeked.order, peeked.locate);
-            half = next_message(feed, half);
+        if constexpr (order_book::ItchMarket::prefetch_levels_enabled) {
+            if (half < feed.size()) {
+                const auto peeked = order_book::peek_itch(message_at(feed, half));
+                market.prefetch_levels(peeked.order, peeked.locate);
+                half = next_message(feed, half);
+            }
         }
         if (!order_book::visit_itch(message_at(feed, offset), handler)) {
             return std::format("message {}: {}", number, handler.failure());
@@ -332,6 +342,7 @@ void register_feeds(std::string_view feeds, order_book::Format format)
             ->ArgName("threads")
             ->RangeMultiplier(2)
             ->Range(1, max_replay_threads)
+            ->MeasureProcessCPUTime()
             ->UseRealTime()
             ->Unit(benchmark::kMillisecond);
         if (format == order_book::Format::Itch) {

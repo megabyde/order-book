@@ -56,7 +56,7 @@ COVERAGE_DIR := build/coverage
 COVERAGE_FAIL_UNDER ?= 100
 BENCH_FEED := build/bench/feed.csv
 BENCH_DEEP_FEED := build/bench/deep.csv
-BENCH_ARGS ?= --benchmark_repetitions=10 --benchmark_report_aggregates_only=true
+BENCH_ARGS ?= --benchmark_repetitions=10 --benchmark_display_aggregates_only=true
 FUZZ_DIR := build/fuzz
 FUZZ_SECONDS ?= 60
 FUZZERS := csv_replay_fuzz itch_replay_fuzz itch_market_fuzz

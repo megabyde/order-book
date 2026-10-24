@@ -85,7 +85,7 @@ jobs:
           fi
           ORDER_BOOK_REPLAY_CSV="build/bench/feed.csv${separator}build/bench/deep.csv" \
             ORDER_BOOK_REPLAY_ITCH=build/bench/deep.itch \
-            "$bench" --benchmark_repetitions=3 --benchmark_report_aggregates_only=true \
+            "$bench" --benchmark_repetitions=3 --benchmark_display_aggregates_only=true \
             --benchmark_out=bench.json --benchmark_out_format=json
       - name: Summarize
         run: |

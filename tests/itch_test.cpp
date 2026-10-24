@@ -563,6 +563,24 @@ ItchMarket unindexed_orders()
     return market;
 }
 
+TEST(ItchMarketTest, PrefetchChangesNothing)
+{
+    ItchMarket market;
+    EXPECT_EQ(market.apply(add_message(1, 7, Side::Buy, 1000, 100)), true);
+    EXPECT_EQ(market.apply(add_message(1, 8, Side::Sell, 1010, 50)), true);
+    const auto before = market.bbo(1);
+    // A live order, a reference number with no page, and a locate with no book
+    for (const auto& [order, locate] :
+         {std::pair<std::uint64_t, std::uint16_t>{7, 1}, {1U << 20U, 1}, {8, 2}}) {
+        market.prefetch(order, locate);
+        market.prefetch_levels(order, locate);
+    }
+    EXPECT_EQ(market.bbo(1), before);
+    EXPECT_EQ(market.bbo(2), bbo({}, {}));
+    EXPECT_EQ(market.order_count(), 2U);
+    EXPECT_EQ(market.level_count(), 2U);
+}
+
 TEST(ItchMarketTest, KeepsOrdersBeyondTheIndex)
 {
     auto market = unindexed_orders();

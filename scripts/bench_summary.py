@@ -5,8 +5,10 @@ Usage: bench_summary.py RESULTS.json [TITLE]
 
 Reads the file that order_book_bench writes with --benchmark_out and prints, under TITLE, the
 host's CPU count and caches, then one row per benchmark: the median of its repetitions when it
-has several, otherwise its single run. Feed paths in benchmark names are cut to their file name,
-so rows from different runners line up. Uses the standard library alone.
+has several, otherwise its single run, with the coefficient of variation of its wall time across
+the repetitions. CPU time is the process's, workers included, for the benchmarks that measure it.
+Feed paths in benchmark names are cut to their file name, so rows from different runners line up.
+Uses the standard library alone.
 """
 
 from __future__ import annotations
@@ -37,15 +39,18 @@ def time_text(nanoseconds: float) -> str:
     return f"{nanoseconds:.3g} ns"
 
 
-def rows(benchmarks: list[dict]) -> list[dict]:
-    """The median aggregate of each benchmark, or its only run when it was not repeated."""
+def rows(benchmarks: list[dict]) -> list[tuple[dict, float | None]]:
+    """The median aggregate of each benchmark, or its only run when it was not repeated, with the
+    coefficient of variation of its wall time when it was."""
     runs: dict[str, list[dict]] = {}
     for benchmark in benchmarks:
         runs.setdefault(benchmark.get("run_name", benchmark["name"]), []).append(benchmark)
-    return [
-        next((b for b in group if b.get("aggregate_name") == "median"), group[0])
-        for group in runs.values()
-    ]
+    result = []
+    for group in runs.values():
+        aggregates = {b["aggregate_name"]: b for b in group if "aggregate_name" in b}
+        cv = aggregates.get("cv")
+        result.append((aggregates.get("median", group[0]), cv["real_time"] if cv else None))
+    return result
 
 
 def main(argv: list[str]) -> int:
@@ -62,15 +67,17 @@ def main(argv: list[str]) -> int:
     title = argv[2] if len(argv) == 3 else context.get("host_name", "benchmarks")
     print(f"### {title}\n")
     print(f"{context.get('num_cpus', '?')} CPUs; {caches or 'caches not reported'}\n")
-    print("| Benchmark | Time | Items per second | Per message |")
-    print("| --- | ---: | ---: | ---: |")
-    for benchmark in rows(results.get("benchmarks", [])):
+    print("| Benchmark | Time | CPU | Spread | Items per second | Per message |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: |")
+    for benchmark, cv in rows(results.get("benchmarks", [])):
         scale = UNIT_NS.get(benchmark.get("time_unit", "ns"), 1.0)
         name = short_name(benchmark.get("run_name", benchmark["name"]))
         items = benchmark.get("items_per_second")
         per_message = benchmark.get("per_message")
         print(
             f"| `{name}` | {time_text(benchmark['real_time'] * scale)} | "
+            f"{time_text(benchmark['cpu_time'] * scale)} | "
+            f"{f'{cv:.1%}' if cv is not None else ''} | "
             f"{f'{items / 1e6:.2f} M' if items else ''} | "
             f"{time_text(per_message * 1e9) if per_message else ''} |"
         )
