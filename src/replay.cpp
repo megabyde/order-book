@@ -267,23 +267,21 @@ struct Batch {
 std::unique_ptr<Batch> recycled(std::unique_ptr<Batch> spare, std::size_t workers)
 {
     if (!spare) {
-        auto batch = std::make_unique<Batch>();
-        batch->outputs.resize(workers);
-        return batch;
+        spare = std::make_unique<Batch>();
     }
-    auto batch = std::move(spare);
-    for (auto& lines : batch->lines) {
+    spare->outputs.resize(workers);
+    for (auto& lines : spare->lines) {
         lines.clear();
     }
-    for (auto& output : batch->outputs) {
+    for (auto& output : spare->outputs) {
         output.text.clear();
         output.lines.clear();
         output.events = 0;
         output.failure.reset();
         output.exception = nullptr;
     }
-    batch->failure.reset();
-    return batch;
+    spare->failure.reset();
+    return spare;
 }
 
 // Split the batch into lines numbered from `number`, skipping the header and blank lines, and give
