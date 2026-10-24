@@ -27,19 +27,27 @@ namespace {
 // Standard input as a stream buffer that fread()s each request whole, since std::cin's buffer may
 // read a character at a time and replay() asks for a megabyte per call. replay() reads only through
 // sgetn(), so there is no underflow(). A read error throws, on every standard library, so that
-// replay() keeps the whole records before it and drops the one it cut short; returning the short
-// count instead would look like the end of the input, where a last line without its LF is applied.
+// replay() keeps the whole records before it and drops the one it cut short; returning a short
+// count alone would look like the end of the input, where a last line without its LF is applied.
 class StdinBuffer : public std::streambuf {
 protected:
     std::streamsize xsgetn(char* data, std::streamsize count) override
     {
-        const auto read = std::fread(data, 1, static_cast<std::size_t>(count), stdin);
-        if (std::ferror(stdin) != 0) {
-            throw std::runtime_error("cannot read the input");
+        if (!m_failed) {
+            const auto read = std::fread(data, 1, static_cast<std::size_t>(count), stdin);
+            m_failed = std::ferror(stdin) != 0;
+            // fread() returns the bytes it read before an error, and replay() keeps nothing from a
+            // call that throws, so the error waits for the next call unless this one read nothing
+            if (read > 0 || !m_failed) {
+                return static_cast<std::streamsize>(read);
+            }
         }
-        return static_cast<std::streamsize>(read);
+        throw std::runtime_error("cannot read the input");
         // The brace holds only the cleanup for a throw whose exception cannot be constructed
     } // GCOVR_EXCL_LINE
+
+private:
+    bool m_failed = false;
 };
 
 // Passes output through to `out`, counting the lines. replay() writes only through sputn() and
