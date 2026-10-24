@@ -55,6 +55,13 @@ public:
     /// and a miss to memory roughly 100 ns. On the real day, distances from 8 to 64 ran within 4%
     /// of each other.
     static constexpr std::size_t prefetch_distance = 16;
+    /// Whether to call prefetch_levels() at all: level prefetch slowed the measured synthetic Linux
+    /// x86-64 replay workload, so that platform stops at prefetch()
+#if defined(__linux__) && defined(__x86_64__)
+    static constexpr bool prefetch_levels_enabled = false;
+#else
+    static constexpr bool prefetch_levels_enabled = true;
+#endif
     /// Start loading the index entry of `order` and the book of `locate`, so that a message naming
     /// them a few messages later does not wait for memory
     void prefetch(std::uint64_t order, std::uint16_t locate) const;

@@ -136,7 +136,8 @@ make bench
 
 The first run writes two seeded feeds with [`scripts/gen_feed.py`](../scripts/gen_feed.py), and
 `BM_Replay/<path>/threads:N` replays each through the same `order_book::replay()` the application
-uses, with 1, 2, 4, and 8 worker threads, timed by the wall clock:
+uses, with 1, 2, 4, and 8 worker threads, timed by the wall clock, with the CPU time of the whole
+process, workers included, beside it:
 
 - `build/bench/feed.csv`: 1M events over 8 tickers. Few live orders, so the book stays in cache and
   input, parsing, and output dominate.
@@ -178,11 +179,13 @@ ORDER_BOOK_REPLAY_ITCH=/path/to/12302019.NASDAQ_ITCH50 \
 The Bench workflow runs the suite on every push to `main` on four GitHub runners: x86-64 Linux,
 Arm64 Linux, macOS on Apple silicon, and x86-64 Windows. Each replays the two seeded feeds above and
 the deep one encoded as ITCH by `scripts/csv_to_itch.py`, then posts a table to the run's summary
-with [`scripts/bench_summary.py`](../scripts/bench_summary.py) and uploads the Google Benchmark JSON
-as an artifact. Shared runners vary from run to run, so the workflow reports and never fails, and a
+with [`scripts/bench_summary.py`](../scripts/bench_summary.py), giving each benchmark's median and
+the spread of its repetitions, and uploads the Google Benchmark JSON, every repetition included, as
+an artifact. Shared runners vary from run to run, so the workflow reports and never fails, and a
 comparison between runners or commits needs several runs. Run it on a branch from the Actions tab.
 
-`BENCH_ARGS` replaces the default Google Benchmark flags, 10 repetitions reporting aggregates only.
+`BENCH_ARGS` replaces the default Google Benchmark flags, 10 repetitions that print only their
+aggregates, while a `--benchmark_out` file keeps every repetition.
 For example, `make bench BENCH_ARGS=--benchmark_filter=BM_Replay` runs the replays alone.
 
 The suite is a Conan `test_requires` behind the `with_benchmarks` option, which sets CMake's
