@@ -57,6 +57,7 @@ class OrderBookConan(ConanFile):
 
     def requirements(self):
         self.requires("unordered_dense/[>=5.2.0 <6]")
+        self.requires("cli11/[>=2.7.2 <3]")
 
     def build_requirements(self):
         # Declare CMake as an explicit build tool. The range matches the project floor and is

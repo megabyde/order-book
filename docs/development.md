@@ -84,7 +84,7 @@ libFuzzer comes with LLVM's Clang, so the toolchain depends on the platform:
 `make fuzz FUZZ_CC=clang-19 FUZZ_CXX=clang++-19`. The preset can use a different compiler from the
 rest of the build because it turns off the tests and benchmarks, whose GoogleTest and Google
 Benchmark binaries the default compiler built, and takes from the debug Conan toolchain only
-`unordered_dense`, which is header-only. It compiles at `-O1`.
+`unordered_dense` and CLI11, which are header-only. It compiles at `-O1`.
 
 Other presets define each fuzzer as an object library outside `all`, so it is in the debug
 compilation database and `make lint` checks it; only the `fuzz` preset links the executables.
