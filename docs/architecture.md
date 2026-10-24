@@ -27,6 +27,14 @@ last LF for CSV, the end of the last complete message for ITCH, whose framing wa
 2-byte big-endian lengths and keeps where each message starts. A partial record carries over to the
 next batch.
 
+The calling thread keeps the batch it last wrote and fills it again, so the batch's text, its
+message starts, and the workers' output buffers keep their capacity instead of being allocated and
+grown for every megabyte. Workers reach a batch through a plain pointer, because the queue owns it
+until every worker has finished it. In five interleaved rounds, the ITCH day ran with 2.2% fewer
+instructions, 2.5% fewer cycles, and 2.2% less CPU; the deep CSV feed replayed in 0.12–0.13 s
+instead of 0.13–0.14 s with 5.7% fewer cycles, and the shallow one peaked at 19 MiB instead of
+20–25.
+
 Each record has a number, its line or message number in the feed, which is what errors report and
 what the merge orders the output by.
 
@@ -206,6 +214,11 @@ Several ideas lost when measured, and are not in the code:
   thread and used 3–8 s more CPU with two or four, since the day is CPU-bound.
 - Merging and writing on a writer thread, so the calling thread only reads and frames, ran the day in
   4.56–4.64 s with 37.7 s of CPU, the same as before.
+- Profile-guided optimization with AppleClang, on top of ThinLTO, cut the ITCH day's instructions
+  by 5.0% when trained on synthetic feeds alone and by 5.5% when trained on the day itself, but its
+  cycles by only 2.1% and 1.5%, since the replay waits on memory. On CSV it saved 2–3% of
+  instructions and at most 1% of cycles, too little for a two-stage build and a profile per
+  compiler.
 - Recording each message's worker while framing, so the workers skip the scan, cut 11.5% of
   instructions but slowed the run to 4.78–4.80 s from 4.56–4.58 s, because the calling thread then
   set the pace. With the writer thread as well, it was within noise of the code before.

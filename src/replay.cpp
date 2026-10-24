@@ -112,6 +112,9 @@ std::string_view ticker_field(std::string_view line)
 // Finds where the last whole line of a batch ends
 class LineFraming {
 public:
+    // Lines need no list of starts
+    explicit LineFraming(std::vector<std::uint32_t>&& /*starts*/) {}
+
     // Offset just past the last LF in `text`, of which [0, from) was scanned before; npos if none
     std::size_t scan(std::string_view text, std::size_t from)
     {
@@ -141,6 +144,12 @@ constexpr std::size_t length_size = 2;
 // Finds where the last whole length-prefixed message of a batch ends, keeping where each starts
 class MessageFraming {
 public:
+    // Keeps where each message starts in `starts`, emptied, so a recycled batch reuses its capacity
+    explicit MessageFraming(std::vector<std::uint32_t>&& starts) : m_starts(std::move(starts))
+    {
+        m_starts.clear();
+    }
+
     // Offset just past the last whole message in `text`; npos if none
     std::size_t scan(std::string_view text, std::size_t /*from*/)
     {
@@ -176,7 +185,9 @@ public:
     // before it, and failure() then holds the exception.
     void next(std::string& text, Framing& framing)
     {
-        text = std::exchange(m_carry, {});
+        // Copied rather than moved, so that both strings keep their capacity
+        text.assign(m_carry);
+        m_carry.clear();
         auto end = std::string::npos;
         while (!m_done) {
             const auto size = text.size();
@@ -251,6 +262,29 @@ struct Batch {
     // Workers yet to finish the batch, guarded by the pipeline's mutex
     std::size_t pending;
 };
+
+// A batch for `workers` workers: `spare`, emptied but with its buffers' capacity, or a new one
+std::unique_ptr<Batch> recycled(std::unique_ptr<Batch> spare, std::size_t workers)
+{
+    if (!spare) {
+        auto batch = std::make_unique<Batch>();
+        batch->outputs.resize(workers);
+        return batch;
+    }
+    auto batch = std::move(spare);
+    for (auto& lines : batch->lines) {
+        lines.clear();
+    }
+    for (auto& output : batch->outputs) {
+        output.text.clear();
+        output.lines.clear();
+        output.events = 0;
+        output.failure.reset();
+        output.exception = nullptr;
+    }
+    batch->failure.reset();
+    return batch;
+}
 
 // Split the batch into lines numbered from `number`, skipping the header and blank lines, and give
 // each line to the worker its ticker hashes to. Returns the number of the next batch's first line.
@@ -521,7 +555,7 @@ public:
     // The threads join as m_threads is destroyed, after this releases them
     ~Pipeline() { stop(); }
 
-    void push(std::shared_ptr<Batch> batch)
+    void push(std::unique_ptr<Batch> batch)
     {
         {
             const std::scoped_lock lock(m_mutex);
@@ -531,7 +565,7 @@ public:
     }
 
     // The oldest batch, once every worker has finished it
-    std::shared_ptr<Batch> pop()
+    std::unique_ptr<Batch> pop()
     {
         std::unique_lock lock(m_mutex);
         m_changed.wait(lock, [this] { return m_queue.front()->pending == 0; });
@@ -555,7 +589,8 @@ private:
     {
         Worker worker;
         for (std::size_t sequence = 0;; ++sequence) {
-            std::shared_ptr<Batch> batch;
+            // The queue owns the batch until pop(), which waits for this worker to finish it
+            Batch* batch = nullptr;
             {
                 std::unique_lock lock(m_mutex);
                 m_changed.wait(lock,
@@ -563,7 +598,7 @@ private:
                 if (m_stopping) {
                     return;
                 }
-                batch = m_queue[sequence - m_popped];
+                batch = m_queue[sequence - m_popped].get();
             }
             auto& output = batch->outputs[index];
             bool processed = false;
@@ -593,7 +628,7 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_changed;
     // Batches not yet popped, oldest first
-    std::deque<std::shared_ptr<Batch>> m_queue;
+    std::deque<std::unique_ptr<Batch>> m_queue;
     std::size_t m_popped = 0;
     bool m_stopping = false;
     std::vector<std::jthread> m_threads;
@@ -657,17 +692,18 @@ std::size_t run(std::istream& in, std::ostream& out, std::size_t threads,
     BatchReader<Framing> reader(in);
     Pipeline<Worker> pipeline(workers);
     std::string buffer;
+    // The batch last written, kept for its buffers' capacity
+    std::unique_ptr<Batch> spare;
     std::size_t next_record = 1;
     std::size_t queued = 0;
     bool reading = true;
     std::size_t events = 0;
     while (true) {
         while (reading && queued < batches_in_flight) {
-            auto batch = std::make_shared<Batch>();
-            batch->outputs.resize(workers);
+            auto batch = recycled(std::move(spare), workers);
             batch->pending = workers;
             batch->first = next_record;
-            Framing framing;
+            Framing framing(std::move(batch->starts));
             reader.next(batch->text, framing);
             // An empty batch assigns nothing
             next_record = assign(*batch, next_record, std::move(framing));
@@ -688,7 +724,9 @@ std::size_t run(std::istream& in, std::ostream& out, std::size_t threads,
             }
             return events;
         }
-        events += write_batch(*pipeline.pop(), out, buffer, unit);
+        auto batch = pipeline.pop();
+        events += write_batch(*batch, out, buffer, unit);
+        spare = std::move(batch);
         --queued;
     }
 }
