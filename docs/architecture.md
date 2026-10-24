@@ -89,10 +89,10 @@ alone, and the rest is the workers slowing each other down through the shared ca
 a pooled record with its total, order count, and side, and each side is a vector of prices and level
 handles, worst first, so the best level is the last element and a change to it is a change to
 the BBO. Finding a price scans from the best end, where most adds and removals happen. Orders live
-in an `ankerl::unordered_dense::map` from order ID to the order's remaining quantity and its level's
-handle, so an execution or delete reaches the level without a search. The map keeps its entries in
-one vector, moving the last into the place of an erased one, and indexes them with Robin Hood
-hashing up to 80% full; the books of a worker's tickers live in the same kind of map.
+in an `ankerl::unordered_dense::map` from order ID to the order's remaining shares and its level's
+handle, 8 bytes, so an execution or delete reaches the level without a search. The map keeps its
+entries in one vector, moving the last into the place of an erased one, and indexes them with Robin
+Hood hashing up to 80% full; the books of a worker's tickers live in the same kind of map.
 
 It replaced an open-addressing index with linear probing, kept at most half full, over a vector of
 orders that reused removed positions. On one thread, the 113.6M-event synthetic feed replayed in
@@ -163,6 +163,25 @@ index entry and the book. Linux x86-64 stops at this stage. Other platforms also
 messages ahead, once those loads have arrived, to load the order's level and the book's two best
 levels, which the BBO line reads. On one thread on the M1 Max, the two stages took the day from
 24.6–24.9 s to 20.6–20.8 s, and any distance from 8 to 64 ran within 4%.
+
+## Widths and failures
+
+Both feeds give an order's shares in 32 bits, and so do the event types and `ItchMessage`: CSV's
+parser rejects a larger `Shares` field, and ITCH's fields are 4 bytes wide. A level's total is 64
+bits, so the shares of fewer than 2^32 orders cannot overflow it, whichever API built the book. The
+events once carried 64-bit shares, which a direct caller could add up past 2^64 at one price, and
+the CSV book's order entry was 16 bytes; at 8, the 10M-event feed over 8000 tickers peaks at
+144–150 MiB instead of 184–185, with the same output.
+
+Level handles and each level's order count are 32 bits as well, so a pool holds fewer than 2^32
+levels at once and a level fewer than 2^32 orders. Neither limit is checked: reaching one takes tens
+of GB of book state.
+
+A `BookError` leaves a book as it was. An exception does not have to: running out of memory inside
+an add can leave the order indexed without its level, so a book is not used after one, and `replay()`
+stops at the first exception a worker reports. The CSV churn test and the ITCH market fuzzer check
+every result against `MarketModel`: the error kind and an unchanged book for a rejected event, and
+otherwise whether the BBO changed, the BBO itself, and the numbers of live orders and levels.
 
 ## Output
 

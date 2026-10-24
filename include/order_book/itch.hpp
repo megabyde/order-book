@@ -30,7 +30,7 @@ struct ItchMessage {
     std::uint64_t order;       ///< Order reference number
     std::uint64_t replacement; ///< Reference number of the new order, for Replace
     std::string_view stock;    ///< Stock symbol, right-padded with spaces to 8 bytes, for Add
-    Quantity shares;           ///< Shares added, taken off, or of the replacement
+    Shares shares;             ///< Shares added, taken off, or of the replacement
     Price price;               ///< Limit price of an add or a replacement
     std::uint16_t locate;      ///< Stock locate code, the day's index of the security
     ItchKind kind;             ///< What the message does

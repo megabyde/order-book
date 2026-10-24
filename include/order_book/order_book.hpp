@@ -42,7 +42,8 @@ enum class BookError : std::uint8_t {
 class OrderBook {
 public:
     /// Apply `event` to the order with ID `order`, returning whether the best bid or offer
-    /// changed; on error the book is unchanged
+    /// changed; on a BookError the book is unchanged. An exception, such as running out of memory,
+    /// can leave the book inconsistent, so the book must not be used after one.
     [[nodiscard]] std::expected<bool, BookError> apply(std::string_view order, const Event& event);
     /// Current best bid and offer
     [[nodiscard]] Bbo bbo() const;
@@ -53,7 +54,7 @@ public:
 
 private:
     struct Order {
-        Quantity remaining;
+        Shares remaining;
         std::uint32_t level;
     };
 

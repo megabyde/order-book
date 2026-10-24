@@ -54,10 +54,7 @@ std::expected<bool, BookError> ItchMarket::execute(const ItchMessage& message)
     if (resting == nullptr) {
         return std::unexpected(BookError::UnknownOrder);
     }
-    // The decoder reads shares from 32 bits, so the minimum fits an order's remaining shares
-    return reduce(
-        message.order, *resting,
-        static_cast<std::uint32_t>(std::min<Quantity>(message.shares, resting->remaining)));
+    return reduce(message.order, *resting, std::min(message.shares, resting->remaining));
 }
 
 std::expected<bool, BookError> ItchMarket::remove(const ItchMessage& message)
@@ -137,7 +134,7 @@ std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
 
     const AddOrder add{.side = message.side, .price = message.price, .shares = message.shares};
     const auto [level, changed] = m_levels.add(book(message.locate), add, message.locate);
-    *resting = Order{.remaining = static_cast<std::uint32_t>(message.shares), .level = level};
+    *resting = Order{.remaining = message.shares, .level = level};
     if (!overflow) {
         ++*live;
     }
@@ -145,7 +142,7 @@ std::expected<bool, BookError> ItchMarket::add(const ItchMessage& message)
     return changed;
 }
 
-bool ItchMarket::reduce(std::uint64_t order, Order& resting, std::uint32_t quantity)
+bool ItchMarket::reduce(std::uint64_t order, Order& resting, Shares quantity)
 {
     const auto locate = m_levels[resting.level].locate;
     resting.remaining -= quantity;

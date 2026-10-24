@@ -10,7 +10,10 @@ namespace order_book {
 
 /// Price in 100ths of a penny
 using Price = std::uint32_t;
-/// Number of shares; 64-bit so that a level total cannot overflow
+/// Shares of one order or one event; 32 bits, as both feed formats give them
+using Shares = std::uint32_t;
+/// Total shares of a price level; 64 bits, so that fewer than 2^32 orders of Shares cannot
+/// overflow it
 using Quantity = std::uint64_t;
 
 /// Side of the book an order rests on
@@ -21,16 +24,16 @@ enum class Side : std::uint8_t {
 
 /// B or S: add a resting order
 struct AddOrder {
-    Side side;       ///< Side the order rests on
-    Price price;     ///< Limit price
-    Quantity shares; ///< Initial quantity
+    Side side;     ///< Side the order rests on
+    Price price;   ///< Limit price
+    Shares shares; ///< Initial quantity
     /// Memberwise equality
     friend bool operator==(const AddOrder&, const AddOrder&) = default;
 };
 
 /// C: decrease the order *to* `shares`; no effect unless smaller, removes the order at 0
 struct DecreaseOrder {
-    Quantity shares; ///< New quantity
+    Shares shares; ///< New quantity
     /// Memberwise equality
     friend bool operator==(const DecreaseOrder&, const DecreaseOrder&) = default;
 };
@@ -43,7 +46,7 @@ struct DeleteOrder {
 
 /// E: execute `shares` of the order, clamped to what remains; removes the order at 0
 struct ExecuteOrder {
-    Quantity shares; ///< Executed quantity
+    Shares shares; ///< Executed quantity
     /// Memberwise equality
     friend bool operator==(const ExecuteOrder&, const ExecuteOrder&) = default;
 };

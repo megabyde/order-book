@@ -36,7 +36,7 @@ using order_book::Side;
 
 constexpr order_book::Price mid_price = 100000;
 constexpr order_book::Price tick = 100;
-constexpr order_book::Quantity lot = 100;
+constexpr order_book::Shares lot = 100;
 
 // Discards everything written to it, so BM_Replay still pays for formatting the output
 class NullBuffer : public std::streambuf {

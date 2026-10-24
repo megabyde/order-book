@@ -54,6 +54,15 @@ public:
         return result;
     }
     [[nodiscard]] const auto& orders() const { return m_orders; }
+    // Number of price levels in every book
+    [[nodiscard]] std::size_t level_count() const
+    {
+        std::size_t count = 0;
+        for (const auto& [book, levels] : m_levels) {
+            count += levels.size();
+        }
+        return count;
+    }
     [[nodiscard]] bool live(std::uint16_t locate, std::uint64_t order) const
     {
         return m_orders.contains({locate, order});

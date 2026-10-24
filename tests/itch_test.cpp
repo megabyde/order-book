@@ -34,7 +34,7 @@ using order_book::Format;
 using order_book::ItchKind;
 using order_book::ItchMessage;
 using order_book::Price;
-using order_book::Quantity;
+using order_book::Shares;
 using order_book::Side;
 using testing::TestParamInfo;
 using testing::TestWithParam;
@@ -73,7 +73,7 @@ std::string replay_error(std::string_view feed, std::size_t threads, std::string
 // What decode_itch() makes of a message with the builders' locate 1 and time 2, given the fields
 // its kind sets
 ItchMessage decoded(ItchKind kind, std::uint64_t order, std::uint64_t replacement,
-                    std::string_view stock, Quantity shares, Price price, Side side = Side::Buy)
+                    std::string_view stock, Shares shares, Price price, Side side = Side::Buy)
 {
     return ItchMessage{
         .time = 2,
@@ -216,7 +216,7 @@ TEST(ItchTest, PeeksTheLocateAndOrderReference)
 }
 
 ItchMessage add_message(std::uint16_t locate, std::uint64_t order, Side side, Price price,
-                        Quantity shares)
+                        Shares shares)
 {
     auto message = decoded(ItchKind::Add, order, 0, "S       ", shares, price, side);
     message.locate = locate;
@@ -224,7 +224,7 @@ ItchMessage add_message(std::uint16_t locate, std::uint64_t order, Side side, Pr
 }
 
 ItchMessage order_message(ItchKind kind, std::uint16_t locate, std::uint64_t order,
-                          Quantity shares = 0)
+                          Shares shares = 0)
 {
     auto message = decoded(kind, order, 0, {}, shares, 0);
     message.locate = locate;
@@ -232,7 +232,7 @@ ItchMessage order_message(ItchKind kind, std::uint16_t locate, std::uint64_t ord
 }
 
 ItchMessage replace_message(std::uint16_t locate, std::uint64_t order, std::uint64_t replacement,
-                            Quantity shares, Price price)
+                            Shares shares, Price price)
 {
     auto message = decoded(ItchKind::Replace, order, replacement, {}, shares, price);
     message.locate = locate;
@@ -513,8 +513,9 @@ ItchMarket spread_market()
 {
     ItchMarket market;
     for (std::size_t i = 0; i < spread_orders.size(); ++i) {
-        EXPECT_TRUE(market.apply(add_message(1, spread_orders[i], Side::Sell,
-                                             static_cast<Price>(1000 + i), 10 * (i + 1))))
+        EXPECT_TRUE(
+            market.apply(add_message(1, spread_orders[i], Side::Sell, static_cast<Price>(1000 + i),
+                                     static_cast<Shares>(10 * (i + 1)))))
             << spread_orders[i];
     }
     return market;
@@ -647,7 +648,7 @@ public:
         std::expected<bool, BookError> changed = false;
         switch (m_random() % 3) {
         case 0: {
-            const auto shares = 1 + (m_random() % resting.remaining);
+            const auto shares = static_cast<Shares>(1 + (m_random() % resting.remaining));
             changed = m_market.apply(order_message(ItchKind::Execute, locate, order, shares));
             m_model.take(locate, order, shares);
             break;
@@ -729,7 +730,7 @@ private:
     }
 
     Price random_price() { return static_cast<Price>(1000 + (m_random() % 40 * 10)); }
-    Quantity random_shares() { return static_cast<Quantity>(1 + (m_random() % 100)); }
+    Shares random_shares() { return static_cast<Shares>(1 + (m_random() % 100)); }
 
     // std::mt19937's output sequence is fixed by the standard, unlike the distributions
     std::mt19937 m_random{7}; // NOLINT(bugprone-random-generator-seed)
