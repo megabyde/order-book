@@ -116,8 +116,9 @@ leaves it at the default `ON`, so `make debug`, `make release`, `make sanitize*`
 `make coverage` all run the suite. It has four layers:
 
 - Unit tests in `tests/*_test.cpp` cover the CSV parser, the ITCH decoder, the CSV book, the ITCH
-  market, and `replay()` in both formats. Each book is also checked against a `std::map` model
-  under randomized churn. [`tests/itch_messages.hpp`](../tests/itch_messages.hpp) builds ITCH messages
+  market, and `replay()` in both formats. Both books are also checked under seeded random churn
+  against `MarketModel` in [`tests/market_model.hpp`](../tests/market_model.hpp), which keeps each
+  level in a `std::map`. [`tests/itch_messages.hpp`](../tests/itch_messages.hpp) builds ITCH messages
   field by field for them.
 - `AppTest.*` runs the application on each error path through
   [`tests/expect_error.cmake`](../tests/expect_error.cmake), which checks the exit status and the
@@ -160,7 +161,8 @@ process, workers included, beside it:
   outgrow the caches, so the order index and the levels dominate.
 
 Workers split the tickers between them, so a feed scales with threads only up to its number of
-tickers, and a one-ticker capture not at all.
+tickers, and a one-ticker capture not at all. `BM_ParseLine`, `BM_AddDelete`, and `BM_ExecuteFront`
+time the CSV parser and one book, with 64 to 4096 orders, without a feed.
 
 `ORDER_BOOK_REPLAY_CSV` lists the feeds to replay, separated like `PATH`. To replay a capture
 instead of the synthetic feeds, point it at the capture:
@@ -246,13 +248,9 @@ Outcome: ccache keeps hitting when the Conan cache is rebuilt, locally and in CI
 dependency to `build/deps/<configuration>/full_deploy/` and points the generated CMake files there
 instead of into the Conan cache. Conan keeps a package it builds from source in a cache folder with
 a random name, so a rebuilt cache gives the compiler new include paths, and ccache, which hashes
-them, misses on every file that includes a dependency header. The copies keep the paths fixed. In
-a Debug build against a second, fresh Conan cache, ccache hit 4 of 12 files without the copies and
-all 12 with them.
-
+them, misses on every file that includes a dependency header. The copies keep the paths fixed.
 Each configuration gets its own folder because `full_deploy` names its subfolders by build type and
-architecture alone, which the sanitizer configurations share with `debug`. A tree installed before
-the copies keeps the cache paths until its next install, after a lock change or a `make clean`.
+architecture alone, which the sanitizer configurations share with `debug`.
 
 In CI, only pushes to `main` save the Conan cache and ccache; a pull request restores `main`'s and
 saves nothing. The Windows job and the benchmark workflow run `conan install` without the deployer,

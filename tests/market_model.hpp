@@ -1,6 +1,6 @@
 #pragma once
 
-// A reference model of ItchMarket, for tests and fuzzing
+// A reference model of the CSV book and the ITCH market, for tests and fuzzing
 
 #include <order_book/feed.hpp>
 #include <order_book/levels.hpp>
