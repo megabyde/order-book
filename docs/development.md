@@ -31,8 +31,9 @@ If a sanitizer detects an error, it prints a stack trace, stops at the first fin
 failure through CTest to the selected `make` target. Fix the reported source error, then rerun the
 same target.
 
-CI runs `make sanitize` and `make sanitize-tsan`. On Linux it first sets `vm.mmap_rnd_bits=28`: the
-runner kernel randomizes mmap with more bits than the TSan runtime's memory layout allows. To install
+CI runs `make sanitize`, `make sanitize-tsan`, and on Windows the `sanitize-asan` preset. On Linux it
+first sets `vm.mmap_rnd_bits=28`: the runner kernel randomizes mmap with more bits than the TSan
+runtime's memory layout allows. To install
 all four instrumented dependency graphs without running their workflows, use
 `make bootstrap-sanitize`. The default `make bootstrap` does
 not install them.
@@ -49,6 +50,20 @@ First-party targets receive the same profile flags through the Conan toolchain.
 Sanitizer runtime options such as `halt_on_error` and `print_stacktrace` live under `[runenv]` in
 `profiles/sanitize-common`. Conan injects them into the generated test presets inherited by the
 public `sanitize*` presets, keeping the runtime configuration out of `CMakePresets.json`.
+
+On Windows, MSVC has AddressSanitizer alone, through
+[`profiles/sanitize-asan-msvc`](../profiles/sanitize-asan-msvc). If the Conan home has no
+`settings_user.yml`, install this project's with `conan config install conan/`; otherwise add its
+`msvc` entry by hand. Run the preset from a Developer PowerShell, which puts the ASan runtime DLL on
+`PATH`:
+
+```bash
+conan install . -pr=profiles/sanitize-asan-msvc --build=missing --lockfile=conan.lock
+cmake --workflow --preset sanitize-asan
+```
+
+The profile drops `/RTC1` from CMake's Debug flags for every package, because MSVC rejects it
+together with `/fsanitize=address`.
 
 ## Fuzzing
 
@@ -311,7 +326,9 @@ and publishes the result from the `main` branch.
 ## Build policy
 
 Warnings are errors by default (`WARNINGS_AS_ERRORS`, default `ON`) in every preset, locally and in
-CI. Relax it for a single build tree with `cmake --preset <name> -DWARNINGS_AS_ERRORS=OFF`.
+CI. Relax it for a single build tree with `cmake --preset <name> -DWARNINGS_AS_ERRORS=OFF`. Clang and
+AppleClang add `-Wshorten-64-to-32` and `-Wimplicit-int-conversion`, the narrowing conversions MSVC
+reports at `/W4` as C4244 and C4267, so they fail a local build and not only the Windows job.
 
 First-party targets also build with hardening flags by default (`ENABLE_HARDENING`, default `ON`;
 disable with `-DENABLE_HARDENING=OFF` on any configure preset):

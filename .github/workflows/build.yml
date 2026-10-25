@@ -122,13 +122,24 @@ jobs:
 
   # Windows has no make; it drives Conan and the CMake presets directly. The Visual
   # Studio generator (selected by conanfile.py on Windows) locates MSVC itself, so no
-  # vcvars environment or third-party action is needed. The sanitize and coverage
-  # presets are Unix-only, so Windows covers release.
+  # vcvars environment or third-party action is needed. Debug runs the tests with the MSVC STL's
+  # checked iterators; sanitize-asan uses MSVC's AddressSanitizer, which has no UBSan or TSan
+  # counterpart. Coverage is Unix-only.
   windows:
-    name: release / windows-latest / msvc
+    name: ${{ matrix.preset }} / windows-latest / msvc
     runs-on: windows-latest
     env:
-      CONAN_FAMILY: windows-msvc-release
+      CONAN_FAMILY: windows-msvc-${{ matrix.preset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: debug
+            profile: -pr=profiles/default -s="build_type=Debug"
+          - preset: release
+            profile: -pr=profiles/default -s="build_type=Release"
+          - preset: sanitize-asan
+            profile: -pr=profiles/sanitize-asan-msvc
     steps:
       - uses: actions/checkout@v7
       - *load-ci-env
@@ -136,12 +147,24 @@ jobs:
         with:
           version: ${{ env.CONAN_VERSION }}
       - *restore-conan
-      - name: Install dependencies (release)
-        run: conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
+      - name: Install sanitizer settings
+        if: matrix.preset == 'sanitize-asan'
+        run: conan config install conan/
+      # The instrumented tests load the ASan runtime DLL from the MSVC tools directory, which only
+      # a Developer PowerShell puts on PATH
+      - name: Put the ASan runtime on PATH
+        if: matrix.preset == 'sanitize-asan'
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $tools = (Get-Content "$vs\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt").Trim()
+          "$vs\VC\Tools\MSVC\$tools\bin\Hostx64\x64" >> $env:GITHUB_PATH
+      - name: Install dependencies (${{ matrix.preset }})
+        run: conan install . ${{ matrix.profile }} --build=missing --lockfile=conan.lock
       - *save-conan
-      - name: Build and test (release preset)
-        run: cmake --workflow --preset release
+      - name: Build and test (${{ matrix.preset }} preset)
+        run: cmake --workflow --preset ${{ matrix.preset }}
       - name: Verify install (release)
+        if: matrix.preset == 'release'
         shell: cmd
         run: |
           cmake --install build\release --prefix "%RUNNER_TEMP%\install" || exit /b 1

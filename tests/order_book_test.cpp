@@ -288,7 +288,7 @@ public:
         const auto before = m_model.bbo(0);
         const auto orders = m_book.order_count();
         const auto levels = m_book.level_count();
-        const auto kind = m_random() % 8;
+        const auto kind = static_cast<unsigned>(m_random() % 8);
         if (m_live.empty() || (adding && kind != 0)) {
             return agrees(add(), before);
         }

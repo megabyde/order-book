@@ -3,7 +3,8 @@
 
 Usage: check_settings_subset.py <required.yml> <installed.yml>
 
-Exits 0 when the installed file lists every required sanitizer value for every required compiler.
+Exits 0 when the installed file lists every required sanitizer value for every required compiler
+other than MSVC: the Makefile that runs this check never builds with it.
 The installed file may contain extra compilers, sanitizer values, or unrelated subsettings such as
 version:.
 
@@ -53,6 +54,8 @@ def main() -> int:
         return 1
     status = 0
     for compiler, needed in sorted(required.items()):
+        if compiler == "msvc":
+            continue
         missing = needed - installed.get(compiler, set())
         if missing:
             print(
