@@ -102,13 +102,12 @@ or `F` that names no live order. A file that cannot be opened also exits with 1.
 as a missing or extra argument, an unknown `--format`, or a `--threads` outside 1 to 1024, prints
 `error: <reason>` to stderr and exits with 2.
 
-Any other failure prints `error: <reason>` and exits with 1, after the output before it: output that
-cannot be written, down to the final flush, so status 0 means every line reached stdout; memory or
-threads that run out; and a read error, which standard input reports everywhere and a file only
-with libstdc++. Built with libc++ or MSVC's library, the file stream reports a read error as the end
-of the file, and the replay ends there. On POSIX,
-output into a pipe whose reader has exited ends the program with `SIGPIPE` instead, as it ends `cat`
-or `grep`.
+Any other failure also prints `error: <reason>` and exits with 1, after the output before it:
+output that cannot be written, down to the final flush, memory or threads that run out, and a read
+error. Status 0 therefore means every line reached stdout. Standard input reports a read error on
+every platform, but a file reports one only with libstdc++; libc++'s and MSVC's file streams take a
+read error for the end of the file, and the replay ends there. On POSIX, output into a pipe whose
+reader has exited ends the program with `SIGPIPE`, as it ends `cat` or `grep`.
 
 ITCH errors name the message instead, `error: message N: <reason>`, counting messages from 1. A
 message fails on an unknown type, a size other than the specification's for a type the book uses, a
@@ -118,68 +117,53 @@ its stock.
 
 ### Design
 
-[Architecture](docs/architecture.md) follows a batch through the threads and the books, and gives
+[Architecture](docs/architecture.md) follows a batch through the threads and the books and gives
 the measurements behind each choice. The library in `include/order_book/` has six parts:
 
-- [`feed.hpp`](include/order_book/feed.hpp): `parse_line()` turns a line into a `Message` whose
-  event is a `std::variant`, or into a `std::expected` error naming the field. It is the only code
-  that knows the line format.
+- [`feed.hpp`](include/order_book/feed.hpp): `parse_line()` turns a CSV line into a `Message`, whose
+  event is a `std::variant`, or into an error naming the field.
 - [`itch.hpp`](include/order_book/itch.hpp): `visit_itch()` decodes one ITCH message and calls the
   handler method for its kind, so the replay dispatches on the type byte once; `decode_itch()`
-  returns the same fields as an `ItchMessage`. It is the only code that knows the ITCH layout.
+  returns the same fields as an `ItchMessage`.
 - [`levels.hpp`](include/order_book/levels.hpp): the price levels both books keep. A level is a
-  pooled record with a running total and an order count, reached by a handle that each of its
-  orders holds, and each side of a book is a vector of prices and handles, worst first, so the best
-  level is the last one and most adds and removals touch only its end.
-- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed. Orders
-  live in an [unordered_dense](https://github.com/martinus/unordered_dense) map from order ID, which
-  keeps them packed in one vector and finds any order in one hash lookup.
-- [`itch_market.hpp`](include/order_book/itch_market.hpp): the books of every stock locate for ITCH.
-  ITCH reference numbers are unique for the day and assigned in sequence, so orders live in small
-  pages of consecutive reference numbers, found through a two-level directory that holds only the
-  ranges in use, and the recent orders most messages name share a few pages. Each order is 8 bytes:
-  its remaining shares and its level's handle. Each book keeps its own reference numbers, as a CSV
-  book keeps its order IDs, so an order whose reference number another locate's live order holds
-  goes to a hash map keyed by both, as does one whose reference number is 2^32 or above.
-- [`replay.hpp`](include/order_book/replay.hpp): `replay(std::istream&, std::ostream&)` reads the
-  feed, keeps a book per ticker, and writes a line whenever a BBO changes. Worker threads, one per
-  hardware thread by default, each keep the books of the tickers that hash to them, or of the stock
-  locates assigned to them for ITCH, whose messages each worker picks out of every batch itself, and
-  the calling thread merges their output back into input order, so the output does not depend on the
-  thread count. The application parses its options with CLI11, opens the file or standard input,
-  and calls it, and so does the replay benchmark.
+  pooled record of its total and order count, and each order holds its level's handle. Each side of
+  a book is a vector of prices and handles, worst first, so the best level is the last element.
+- [`order_book.hpp`](include/order_book/order_book.hpp): one ticker's book for the CSV feed, with its
+  orders in an [unordered_dense](https://github.com/martinus/unordered_dense) map keyed by order ID.
+- [`itch_market.hpp`](include/order_book/itch_market.hpp): the books of many stock locates for ITCH.
+  Reference numbers are unique for the day and assigned in sequence, so orders live in pages of
+  consecutive reference numbers instead of a hash table.
+- [`replay.hpp`](include/order_book/replay.hpp): `replay()` reads the feed, applies it on worker
+  threads that each own a share of the books, and writes a line whenever a BBO changes, in feed
+  order whatever the thread count. The default is one worker per hardware thread, at most 8.
 
-This repository uses:
+The application in `src/main.cpp` parses its options with CLI11, opens the file or standard input,
+and calls `replay()`.
 
-- [CMake](https://cmake.org) configure, build, and test presets as the public build interface
-- [Conan 2](https://conan.io) for dependency management
-- [unordered_dense](https://github.com/martinus/unordered_dense) via Conan for the CSV book's hash
-  maps
-- [CLI11](https://github.com/CLIUtils/CLI11) via Conan for the application's options
+The project uses:
+
+- [CMake](https://cmake.org) presets as the build interface
+- [Conan 2](https://conan.io) for dependencies
+- [unordered_dense](https://github.com/martinus/unordered_dense) for the CSV book's maps
+- [CLI11](https://github.com/CLIUtils/CLI11) for the application's options
 - [GoogleTest](https://github.com/google/googletest) and
-  [Google Benchmark](https://github.com/google/benchmark) via Conan
-- [Doxygen](https://www.doxygen.nl) for generated API documentation
+  [Google Benchmark](https://github.com/google/benchmark) for the tests and benchmarks
+- [Doxygen](https://www.doxygen.nl) for the API documentation
 
 ## Operating model
 
-The build is layered, and each layer owns one thing:
+- **Conan** resolves the dependencies, the toolchain, and the CMake generator from
+  [`conanfile.py`](conanfile.py) and [`profiles/`](profiles), and [`conan.lock`](conan.lock) pins the
+  exact versions.
+- **CMake presets** in [`CMakePresets.json`](CMakePresets.json) are the public build interface: the
+  `debug`, `release`, `sanitize*`, and `coverage` names you configure, build, and test. They include
+  the `ConanPresets.json` that Conan generates, which `make bootstrap` creates once per clone.
+- The [`Makefile`](Makefile) runs `conan install` with the right profile, then
+  `cmake --workflow --preset <name>`. On Windows you run those two commands directly (see
+  [Windows](#windows)).
 
-- **Conan** owns the dependency graph, the toolchain, the CMake generator, and the ABI-relevant
-  settings. It resolves them from [`conanfile.py`](conanfile.py) and the [`profiles/`](profiles)
-  files; [`conan.lock`](conan.lock) pins the exact graph for reproducible builds.
-- **CMake presets** ([`CMakePresets.json`](CMakePresets.json)) are the public build interface: the
-  `debug`, `release`, `sanitize*`, and `coverage` names you configure, build, and test. They are
-  checked in and are the source of truth for how the project is built.
-- Conan writes its toolchain details into a generated `ConanPresets.json` that `CMakePresets.json`
-  includes. That file is an implementation detail, not an interface; `make bootstrap` is the
-  one-time per-clone step that materializes it.
-- The [`Makefile`](Makefile) is a thin convenience wrapper: each target runs `conan install` for the
-  right profile, then `cmake --workflow --preset <name>`. On Windows you run those two commands
-  directly (see [Windows](#windows)).
-
-When you change the Conan configuration (versions, options, or profile), rerun `make bootstrap` or
-the matching `make` target and keep using the same public preset names. The preset interface is
-stable across toolchain changes.
+After changing the Conan configuration, rerun `make bootstrap` or the matching `make` target; the
+preset names stay the same.
 
 ## Layout
 
@@ -251,21 +235,19 @@ The setup is complete when `make debug` exits successfully after running the tes
 
 Outcome: dependencies installed, the release preset configured and built, and the test suite passed.
 
-The `Makefile` is a Unix convenience wrapper. On Windows, run Conan and the CMake preset directly
-from any shell. The Visual Studio generator locates MSVC, so no Developer PowerShell or `vcvarsall`
-setup is required.
+The `Makefile` is Unix-only. On Windows, run Conan and the CMake preset directly from any shell. The
+Visual Studio generator locates MSVC, so the build needs no Developer PowerShell or `vcvarsall`;
+only the `sanitize-asan` tests do, for the ASan runtime on `PATH`.
 
 ```bash
 conan install . -pr=profiles/default -s="build_type=Release" --build=missing --lockfile=conan.lock
 cmake --workflow --preset release
 ```
 
-The setup is complete when the workflow exits successfully after running the tests.
-`cmake --workflow --preset <name>` runs configure, build, and test in one step; the Unix `make`
-targets call the same workflows. MSVC has AddressSanitizer alone, so `sanitize-asan` is the one
-sanitizer preset that runs on Windows, from its own profile (see
-[Sanitizers](docs/development.md#sanitizers)). The `sanitize`, `sanitize-ubsan`, `sanitize-tsan`, and
-`coverage` presets are Unix-only.
+The setup is complete when the workflow exits successfully after running the tests. `debug` works
+the same way with `build_type=Debug`. MSVC has AddressSanitizer alone, so `sanitize-asan` is the one
+sanitizer preset on Windows, from its own profile (see [Sanitizers](docs/development.md#sanitizers)).
+The `sanitize`, `sanitize-ubsan`, `sanitize-tsan`, and `coverage` presets are Unix-only.
 
 ## Development workflows
 

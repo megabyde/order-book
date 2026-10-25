@@ -426,8 +426,8 @@ private:
     std::uint64_t m_next_id = 0;
 };
 
-// The book grows to thousands of orders, which grows its ID index several times and removes entries
-// from every position of a probe run, then drains
+// The book grows to thousands of orders, which grows its order map several times and erases entries
+// throughout it, then drains
 TEST_F(OrderBookTest, MatchesModelUnderChurn)
 {
     Churn churn(book);

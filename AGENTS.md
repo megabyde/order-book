@@ -69,14 +69,17 @@ fails the check and expects a manual merge.
 
 ## Feed semantics
 
-The effect of each message type is implemented twice: in `src/order_book.cpp`, and in
-`scripts/reference_bbo.py`, the oracle of the differential tests. A semantics change updates both in
-the same commit; the differential tests fail while they disagree. The output format is likewise
-shared by `src/replay.cpp` and the reference model.
+The effect of each event lives in four places: the CSV book in `src/order_book.cpp`, the ITCH market
+in `src/itch_market.cpp`, both on `LevelPool` in `include/order_book/levels.hpp`; `MarketModel` in
+`tests/market_model.hpp`, which the churn tests and the market fuzzer check both books against; and
+`scripts/reference_bbo.py`, the oracle of the differential tests. A semantics change updates all of
+them in the same commit; the tests fail while they disagree. The output format is shared by
+`src/replay.cpp` and `scripts/reference_bbo.py`.
 
-ITCH input maps onto the same semantics in `src/itch.cpp`. The model reads only CSV, so the ITCH
-path is checked by encoding the CSV feeds with `scripts/csv_to_itch.py` and requiring the same
-output. A change to how an ITCH type maps onto the book updates the encoder in the same commit.
+`visit_itch()` in `include/order_book/itch.hpp` maps each ITCH type onto those events. The Python
+model reads only CSV, so the ITCH path is checked by encoding the CSV feeds with
+`scripts/csv_to_itch.py` and requiring the same output. A change to how an ITCH type maps onto the
+book updates the encoder in the same commit.
 
 Never commit a real exchange capture. Tests use the hand-checked `tests/data/sample.csv` and feeds
 from `scripts/gen_feed.py`; point `ORDER_BOOK_REPLAY_CSV` at a local capture to benchmark it.

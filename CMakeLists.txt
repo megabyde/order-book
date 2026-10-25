@@ -501,7 +501,7 @@ if(BUILD_BENCHMARKS)
     find_package(benchmark CONFIG REQUIRED)
     add_executable(order_book_bench bench/order_book_bench.cpp)
     target_link_libraries(order_book_bench PRIVATE order_book_lib benchmark::benchmark)
-    # MSVC deprecates std::getenv (C4996), which reads ORDER_BOOK_REPLAY_CSV
+    # MSVC deprecates std::getenv (C4996), which reads the ORDER_BOOK_REPLAY_* feed lists
     target_compile_definitions(
         order_book_bench PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
     )

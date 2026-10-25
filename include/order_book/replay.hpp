@@ -15,8 +15,8 @@ enum class Format : std::uint8_t {
 
 /// Replay an exchange feed and write the best bid and offer of a ticker whenever it changes
 ///
-/// `in` holds a header line, then one event per line in the format Event parses; a trailing CR
-/// and blank lines are skipped. Each change writes `<TIME>,<TICKER>,<BBP>,<BBQ>,<BAP>,<BAQ>` to
+/// `in` holds a header line, then one event per line in the format parse_line() reads; a trailing
+/// CR and blank lines are skipped. Each change writes `<TIME>,<TICKER>,<BBP>,<BBQ>,<BAP>,<BAQ>` to
 /// `out`, with empty fields for an empty side. Returns the number of events applied, trades
 /// included. Throws std::invalid_argument prefixed with `line N: ` on the first line that cannot
 /// be parsed or applied; output up to that line has already been written.
@@ -29,7 +29,7 @@ enum class Format : std::uint8_t {
 ///
 /// The input is read in batches of at least 1 MiB, several ahead of the output, so `in` should be a
 /// file or a stream that reaches its end: a producer that waits for output before writing more
-/// can stall. Uses the platform default worker count; see the overload taking `format`.
+/// can stall. Uses default_threads() workers.
 std::size_t replay(std::istream& in, std::ostream& out);
 
 /// Replay as above with `threads` worker threads, at least 1
