@@ -1,5 +1,5 @@
 // Applies the operations the input encodes to an ItchMarket and to MarketModel, which must agree
-// on every result, every BBO, and the number of live orders
+// on every result, every BBO, and the numbers of live orders and price levels
 
 #include <order_book/feed.hpp>
 #include <order_book/itch.hpp>
@@ -98,6 +98,7 @@ public:
         }
         check(m_market.bbo(message.locate) == m_model.bbo(message.locate));
         check(m_market.order_count() == m_model.orders().size());
+        check(m_market.level_count() == m_model.level_count());
     }
 
 private:
@@ -124,7 +125,8 @@ private:
                 return std::unexpected(BookError::UnknownOrder);
             }
             m_model.take(locate, order,
-                         std::min(message.shares, m_model.orders().at({locate, order}).remaining));
+                         std::min<order_book::Quantity>(
+                             message.shares, m_model.orders().at({locate, order}).remaining));
             return {};
         case 2:
             message.kind = ItchKind::Delete;

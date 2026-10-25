@@ -4,9 +4,12 @@
 #include <order_book/levels.hpp>
 #include <order_book/order_book.hpp>
 
+#include "market_model.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <map>
 #include <optional>
 #include <ostream>
@@ -14,7 +17,6 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -30,7 +32,7 @@ using order_book::Level;
 using order_book::NoOp;
 using order_book::OrderBook;
 using order_book::Price;
-using order_book::Quantity;
+using order_book::Shares;
 using order_book::Side;
 
 namespace order_book {
@@ -75,12 +77,12 @@ protected:
         return applied.value_or(false);
     }
 
-    void buy(std::string_view order, Price price, Quantity shares)
+    void buy(std::string_view order, Price price, Shares shares)
     {
         apply(order, AddOrder{.side = Side::Buy, .price = price, .shares = shares});
     }
 
-    void sell(std::string_view order, Price price, Quantity shares)
+    void sell(std::string_view order, Price price, Shares shares)
     {
         apply(order, AddOrder{.side = Side::Sell, .price = price, .shares = shares});
     }
@@ -271,139 +273,174 @@ TEST_F(OrderBookTest, RejectsDuplicateAddAndLeavesBookUnchanged)
     EXPECT_EQ(book.bbo(), bbo({}, Level{1200, 10}));
 }
 
-// Live orders and per-level totals, kept the obvious way
-class Model {
+// Applies seeded events of every kind to a book and to MarketModel, the reference the ITCH fuzzer
+// uses: adds of 0 to 100 shares, executions and decreases of any size up to past the order's
+// remaining shares, deletes, fills, and no-ops, and adds of a live ID and events naming no live
+// order, which must fail and leave the book as it was
+class Churn {
 public:
-    void add(const std::string& id, const AddOrder& add)
+    explicit Churn(OrderBook& book) : m_book(book) {}
+
+    // Apply one event, an add with probability two in three when `adding`, and report whether the
+    // book still agrees with the model
+    testing::AssertionResult step(bool adding)
     {
-        (add.side == Side::Buy ? m_bids : m_asks)[add.price] += add.shares;
-        m_live.emplace(id, Resting{
-                               .side = add.side,
-                               .price = add.price,
-                               .shares = add.shares,
-                               .index = m_ids.size(),
-                           });
-        m_ids.push_back(id);
+        const auto before = m_model.bbo(0);
+        const auto orders = m_book.order_count();
+        const auto levels = m_book.level_count();
+        const auto kind = m_random() % 8;
+        if (m_live.empty() || (adding && kind != 0)) {
+            return agrees(add(), before);
+        }
+        if (adding) {
+            const auto applied = unknown();
+            return rejected(applied, BookError::UnknownOrder, before, orders, levels);
+        }
+        const auto index = m_random() % m_live.size();
+        if (kind == 0) {
+            const auto applied =
+                m_book.apply(std::to_string(m_live[index]),
+                             AddOrder{.side = Side::Buy, .price = 1000, .shares = 1});
+            return rejected(applied, BookError::DuplicateOrder, before, orders, levels);
+        }
+        return agrees(change(index, kind), before);
     }
 
-    // Take `shares` off order `id`, removing it at 0
-    void take(const std::string& id, Quantity shares)
+    // Delete every live order, reporting whether the book agrees with the model after each delete
+    testing::AssertionResult drain()
     {
-        const auto found = m_live.find(id);
-        auto& resting = found->second;
-        auto& levels = resting.side == Side::Buy ? m_bids : m_asks;
-        const auto level = levels.find(resting.price);
-        level->second -= shares;
-        if (level->second == 0) {
-            levels.erase(level);
-        }
-        resting.shares -= shares;
-        if (resting.shares == 0) {
-            m_live.at(m_ids.back()).index = resting.index;
-            m_ids[resting.index] = m_ids.back();
-            m_ids.pop_back();
-            m_live.erase(found);
-        }
-    }
-
-    // IDs of the live orders, in no particular order
-    [[nodiscard]] const std::vector<std::string>& ids() const { return m_ids; }
-    [[nodiscard]] Quantity remaining(const std::string& id) const { return m_live.at(id).shares; }
-
-    [[nodiscard]] Bbo bbo() const
-    {
-        Bbo result;
-        if (!m_bids.empty()) {
-            const auto& [price, total] = *m_bids.rbegin();
-            result.bid = Level{.price = price, .quantity = total};
-        }
-        if (!m_asks.empty()) {
-            const auto& [price, total] = *m_asks.begin();
-            result.ask = Level{.price = price, .quantity = total};
-        }
-        return result;
-    }
-
-    // Whether `book` holds the same levels and number of orders, and `changed`, what the book
-    // reported for the last event, matches whether the BBO moved from `before`
-    [[nodiscard]] testing::AssertionResult matches(const OrderBook& book, bool changed,
-                                                   const Bbo& before) const
-    {
-        const auto expected = bbo();
-        if (changed != (expected != before)) {
-            return testing::AssertionFailure()
-                   << "reported " << (changed ? "a" : "no") << " BBO change";
-        }
-        if (book.bbo() != expected) {
-            return testing::AssertionFailure() << "BBO " << testing::PrintToString(book.bbo())
-                                               << ", expected " << testing::PrintToString(expected);
-        }
-        if (book.order_count() != m_live.size() ||
-            book.level_count() != m_bids.size() + m_asks.size()) {
-            return testing::AssertionFailure()
-                   << book.order_count() << " orders on " << book.level_count()
-                   << " levels, expected " << m_live.size() << " on "
-                   << m_bids.size() + m_asks.size();
+        while (!m_live.empty()) {
+            const auto before = m_model.bbo(0);
+            const auto id = m_live.back();
+            const auto applied = m_book.apply(std::to_string(id), DeleteOrder{});
+            m_model.take(0, id, m_model.orders().at({0, id}).remaining);
+            m_live.pop_back();
+            if (const auto result = agrees(applied, before); !result) {
+                return result;
+            }
         }
         return testing::AssertionSuccess();
     }
 
+    [[nodiscard]] std::size_t live() const { return m_live.size(); }
+
 private:
-    struct Resting {
-        Side side;
-        Price price;
-        Quantity shares;
-        std::size_t index; // Position in m_ids
-    };
-    std::unordered_map<std::string, Resting> m_live;
-    std::vector<std::string> m_ids;
-    std::map<Price, Quantity> m_bids;
-    std::map<Price, Quantity> m_asks;
-};
+    std::expected<bool, BookError> add()
+    {
+        const AddOrder add{
+            .side = m_random() % 2 == 0 ? Side::Buy : Side::Sell,
+            .price = static_cast<Price>(1000 + (m_random() % 16 * 10)),
+            .shares = static_cast<Shares>(m_random() % 20 == 0 ? 0 : 1 + (m_random() % 100)),
+        };
+        const auto id = m_next_id++;
+        m_model.add(0, id, add.side, add.price, add.shares);
+        m_live.push_back(id);
+        return m_book.apply(std::to_string(id), add);
+    }
 
-// Seeded adds, executions, and deletes checked after every event against the model. The book grows
-// to about ten thousand orders and drains again, which grows its ID index several times and
-// removes entries from every position of a probe run.
-TEST_F(OrderBookTest, MatchesModelUnderChurn)
-{
-    // std::mt19937's output sequence is fixed by the standard, unlike the distributions
-    std::mt19937 random(1); // NOLINT(bugprone-random-generator-seed)
-    Model model;
-    std::uint64_t next_id = 0;
-    std::size_t peak = 0;
+    // An execution or delete of an ID never used
+    std::expected<bool, BookError> unknown()
+    {
+        const auto id = std::to_string(m_next_id + 1'000'000);
+        if (m_random() % 2 == 0) {
+            return m_book.apply(id, ExecuteOrder{1});
+        }
+        return m_book.apply(id, DeleteOrder{});
+    }
 
-    constexpr int steps = 40000;
-    for (int step = 0; step < steps; ++step) {
-        // Two adds in three during the first half, then only removals
-        const auto before = model.bbo();
-        auto changed = false;
-        if (model.ids().empty() || (step < steps / 2 && random() % 3 != 0)) {
-            const AddOrder add{
-                .side = random() % 2 == 0 ? Side::Buy : Side::Sell,
-                .price = static_cast<Price>(1000 + (random() % 16 * 10)),
-                .shares = static_cast<Quantity>(1 + (random() % 100)),
-            };
-            const auto id = std::to_string(next_id++);
-            changed = apply(id, add);
-            model.add(id, add);
-            peak = std::max(peak, model.ids().size());
+    // Apply an event of `kind`, 1 to 7, to live order `index`, which the check sees as swappable
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    std::expected<bool, BookError> change(std::size_t index, unsigned kind)
+    {
+        const auto id = m_live[index];
+        const auto remaining = static_cast<Shares>(m_model.orders().at({0, id}).remaining);
+        const auto shares = static_cast<Shares>(m_random() % (remaining + 21));
+        std::expected<bool, BookError> applied;
+        if (kind <= 2) {
+            applied = m_book.apply(std::to_string(id), ExecuteOrder{shares});
+            m_model.take(0, id, std::min(shares, remaining));
+        }
+        else if (kind <= 4) {
+            applied = m_book.apply(std::to_string(id), DecreaseOrder{shares});
+            if (shares < remaining) {
+                m_model.take(0, id, remaining - shares);
+            }
+        }
+        else if (kind == 5 || kind == 6) {
+            applied = m_book.apply(std::to_string(id),
+                                   kind == 5 ? Event{DeleteOrder{}} : Event{FillOrder{}});
+            m_model.take(0, id, remaining);
         }
         else {
-            const auto id = model.ids()[random() % model.ids().size()];
-            const auto remaining = model.remaining(id);
-            if (random() % 2 == 0) {
-                const auto shares = 1 + (random() % remaining);
-                changed = apply(id, ExecuteOrder{shares});
-                model.take(id, shares);
-            }
-            else {
-                changed = apply(id, DeleteOrder{});
-                model.take(id, remaining);
-            }
+            applied = m_book.apply(std::to_string(id), NoOp{});
         }
-        ASSERT_TRUE(model.matches(book, changed, before)) << "step " << step;
+        if (!m_model.live(0, id)) {
+            m_live[index] = m_live.back();
+            m_live.pop_back();
+        }
+        return applied;
     }
-    EXPECT_GT(peak, 5000U);
+
+    // Whether the book reported `applied` for a successful event as the model expects, from
+    // `before`, and holds what the model holds
+    testing::AssertionResult agrees(const std::expected<bool, BookError>& applied,
+                                    const Bbo& before)
+    {
+        const auto expected = m_model.bbo(0);
+        if (!applied || *applied != (expected != before)) {
+            return testing::AssertionFailure()
+                   << "result " << testing::PrintToString(applied) << " for a BBO change from "
+                   << testing::PrintToString(before) << " to " << testing::PrintToString(expected);
+        }
+        if (m_book.bbo() != expected || m_book.order_count() != m_model.orders().size() ||
+            m_book.level_count() != m_model.level_count()) {
+            return testing::AssertionFailure()
+                   << "BBO " << testing::PrintToString(m_book.bbo()) << " with "
+                   << m_book.order_count() << " orders on " << m_book.level_count()
+                   << " levels, expected " << testing::PrintToString(expected) << " with "
+                   << m_model.orders().size() << " on " << m_model.level_count();
+        }
+        return testing::AssertionSuccess();
+    }
+
+    // Whether the book rejected an event with `error` and kept the BBO and counts it had
+    testing::AssertionResult rejected(const std::expected<bool, BookError>& applied,
+                                      BookError error, const Bbo& before, std::size_t orders,
+                                      std::size_t levels) const
+    {
+        if (applied != std::unexpected(error) || m_book.bbo() != before ||
+            m_book.order_count() != orders || m_book.level_count() != levels) {
+            return testing::AssertionFailure()
+                   << "a rejected event returned " << testing::PrintToString(applied)
+                   << " or changed the book";
+        }
+        return testing::AssertionSuccess();
+    }
+
+    OrderBook& m_book;
+    MarketModel m_model;
+    // std::mt19937's output sequence is fixed by the standard, unlike the distributions
+    std::mt19937 m_random{1}; // NOLINT(bugprone-random-generator-seed)
+    // IDs of the live orders, in no particular order
+    std::vector<std::uint64_t> m_live;
+    std::uint64_t m_next_id = 0;
+};
+
+// The book grows to thousands of orders, which grows its ID index several times and removes entries
+// from every position of a probe run, then drains
+TEST_F(OrderBookTest, MatchesModelUnderChurn)
+{
+    Churn churn(book);
+    std::size_t peak = 0;
+    constexpr int steps = 60000;
+    for (int step = 0; step < steps; ++step) {
+        ASSERT_TRUE(churn.step(step < steps / 2)) << "step " << step;
+        peak = std::max(peak, churn.live());
+    }
+    EXPECT_GT(peak, 2000U);
+    ASSERT_TRUE(churn.drain());
+    EXPECT_EQ(book.order_count(), 0U);
+    EXPECT_EQ(book.level_count(), 0U);
 }
 
 TEST_F(OrderBookTest, ReportsWhetherBboChanged)

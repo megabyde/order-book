@@ -52,6 +52,10 @@ struct BookLevels {
  *
  * An order keeps its level's handle, so an execution or delete reaches the level without a search.
  * Handle 0 is never given out, so that 0 can mean none. Removed levels' handles are reused.
+ *
+ * Handles and each level's order count are 32 bits, so a pool holds fewer than 2^32 levels at once
+ * and a level fewer than 2^32 orders; past either, a handle or a count wraps. Neither is checked:
+ * reaching them takes tens of GB of book state.
  */
 class LevelPool {
 public:
@@ -66,7 +70,7 @@ public:
     Added add(BookLevels& book, const AddOrder& order, std::uint16_t locate = 0);
     /// Take `quantity` off level `level` of `book`, and one order off it if `removed`, removing the
     /// level once it has no orders; returns whether the best bid or offer changed
-    bool reduce(BookLevels& book, std::uint32_t level, Quantity quantity, bool removed);
+    bool reduce(BookLevels& book, std::uint32_t level, Shares quantity, bool removed);
     /// Best bid and offer of `book`
     [[nodiscard]] Bbo bbo(const BookLevels& book) const;
 
@@ -114,8 +118,7 @@ inline LevelPool::Added LevelPool::add(BookLevels& book, const AddOrder& order,
 
 // A handle and a quantity, which the check sees as swappable
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-inline bool LevelPool::reduce(BookLevels& book, std::uint32_t level, Quantity quantity,
-                              bool removed)
+inline bool LevelPool::reduce(BookLevels& book, std::uint32_t level, Shares quantity, bool removed)
 {
     auto& record = m_records[level];
     auto& levels = record.side == Side::Buy ? book.bids : book.asks;

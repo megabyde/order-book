@@ -36,11 +36,11 @@ namespace order_book {
 class ItchMarket {
 public:
     /// Apply `message` to its locate's book, returning whether that book's best bid or offer
-    /// changed; on error nothing changes. An add or a replacement fails with DuplicateOrder if its
-    /// reference number names a live order of the message's locate, and an execution, delete, or
-    /// replace fails with UnknownOrder if its order is not live in that locate. Trades and skipped
-    /// messages change nothing. Messages are expected from the decoder, so their shares fit in 32
-    /// bits.
+    /// changed; on a BookError nothing changes, and after an exception, such as running out of
+    /// memory, the market must not be used. An add or a replacement fails with DuplicateOrder if
+    /// its reference number names a live order of the message's locate, and an execution, delete,
+    /// or replace fails with UnknownOrder if its order is not live in that locate. Trades and
+    /// skipped messages change nothing.
     [[nodiscard]] std::expected<bool, BookError> apply(const ItchMessage& message);
     /// apply() for an Add, without dispatching on the kind
     [[nodiscard]] std::expected<bool, BookError> add(const ItchMessage& message);
@@ -79,7 +79,7 @@ private:
     // A resting order in 8 bytes, as ITCH gives shares in 32 bits; level 0 marks an entry of the
     // index that holds none
     struct Order {
-        std::uint32_t remaining;
+        Shares remaining;
         std::uint32_t level;
     };
     // Reference numbers below this live in the index, and larger ones in m_overflow. Nasdaq starts
@@ -109,7 +109,7 @@ private:
     // Take `quantity` off `resting`, the order `order`, removing it and then its level once they
     // reach 0; returns whether its book's best bid or offer changed. Removing an order of
     // m_overflow invalidates `resting`.
-    bool reduce(std::uint64_t order, Order& resting, std::uint32_t quantity);
+    bool reduce(std::uint64_t order, Order& resting, Shares quantity);
     // The live order `order` of `locate`, or nullptr
     [[nodiscard]] Order* find(std::uint64_t order, std::uint16_t locate);
     // The index entry of `order`, live or not, or nullptr if its page does not exist
