@@ -72,6 +72,10 @@ function(enable_project_warnings target)
         target_compile_options(${target} PRIVATE /W4)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        # Report the narrowing conversions that MSVC rejects at /W4 as C4244 and C4267
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(${target} PRIVATE -Wshorten-64-to-32 -Wimplicit-int-conversion)
+        endif()
     endif()
     if(WARNINGS_AS_ERRORS)
         # Adds /WX for MSVC and -Werror for GCC/Clang.

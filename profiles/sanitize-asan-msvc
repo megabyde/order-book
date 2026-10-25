@@ -1,0 +1,15 @@
+# AddressSanitizer for MSVC on Windows. It selects the same sanitize-asan preset as
+# profiles/sanitize-asan, whose flags are Clang's and GCC's. MSVC rejects /RTC1, which CMake puts in
+# the Debug flags, together with /fsanitize=address, so the profile replaces the Debug flags for the
+# dependencies and first-party targets alike. The tests need the ASan runtime DLL from the MSVC
+# tools directory on PATH, as a Developer PowerShell sets it.
+include(./default)
+
+[settings]
+build_type=Debug
+compiler.sanitizer=Address
+
+[conf]
+tools.build:cflags=["/fsanitize=address"]
+tools.build:cxxflags=["/fsanitize=address"]
+tools.cmake.cmaketoolchain:extra_variables={"CMAKE_C_FLAGS_DEBUG": {"value": "/Zi /Ob0 /Od", "cache": True, "type": "STRING"}, "CMAKE_CXX_FLAGS_DEBUG": {"value": "/Zi /Ob0 /Od", "cache": True, "type": "STRING"}}
