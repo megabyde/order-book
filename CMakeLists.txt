@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.29)
 
 project(
     order_book
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Exchange feed order book that prints the best bid and offer"
     LANGUAGES CXX
 )
