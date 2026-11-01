@@ -233,8 +233,8 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     include(GoogleTest)
     add_executable(
-        order_book_test tests/feed_test.cpp tests/itch_test.cpp tests/order_book_test.cpp
-                        tests/replay_test.cpp
+        order_book_test tests/feed_test.cpp tests/itch_test.cpp tests/metamorphic_test.cpp
+                        tests/order_book_test.cpp tests/replay_test.cpp
     )
     target_link_libraries(order_book_test PRIVATE order_book_lib GTest::gtest_main)
     enable_project_options(order_book_test)
