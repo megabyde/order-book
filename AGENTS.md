@@ -78,8 +78,9 @@ them in the same commit; the tests fail while they disagree. The output format i
 
 `visit_itch()` in `include/order_book/itch.hpp` maps each ITCH type onto those events. The Python
 model reads only CSV, so the ITCH path is checked by encoding the CSV feeds with
-`scripts/csv_to_itch.py` and requiring the same output. A change to how an ITCH type maps onto the
-book updates the encoder in the same commit.
+`scripts/csv_to_itch.py` and requiring the same output, and by replaying a seeded native ITCH feed
+against `MarketModel` in `tests/itch_test.cpp`. A change to how an ITCH type maps onto the book
+updates the encoder and that feed's generator in the same commit.
 
 Never commit a real exchange capture. Tests use the hand-checked `tests/data/sample.csv` and feeds
 from `scripts/gen_feed.py`; point `ORDER_BOOK_REPLAY_CSV` at a local capture to benchmark it.

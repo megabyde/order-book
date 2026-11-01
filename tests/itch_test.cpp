@@ -195,6 +195,72 @@ TEST(ItchTest, DecodesReferencesOfAll64Bits)
     EXPECT_EQ(replaced->replacement, last_reference);
 }
 
+// Every message type of the Nasdaq TotalView-ITCH 5.0 specification, February 2024 revision, with
+// its length, taken from the specification's field tables rather than from the decoder
+constexpr auto specification = std::to_array<std::pair<char, std::size_t>>({
+    {'S', 12}, {'R', 39}, {'H', 25}, {'Y', 20}, {'L', 26}, {'V', 35}, {'W', 12}, {'K', 28},
+    {'J', 35}, {'h', 21}, {'A', 36}, {'F', 40}, {'E', 31}, {'C', 36}, {'X', 23}, {'D', 19},
+    {'U', 35}, {'P', 44}, {'Q', 40}, {'B', 19}, {'I', 50}, {'N', 20}, {'O', 48},
+});
+// The types that change a book or report a trade; the book skips the rest
+constexpr std::string_view book_types = "AFECXDUPQ";
+
+// A message of `type` and `size` whose fields are zero, but for a valid side where an add has one
+std::string message_of(char type, std::size_t size)
+{
+    constexpr std::size_t side_offset = 19;
+    auto message = itch::header(type, 1, 2);
+    message.resize(size, '\0');
+    if ((type == 'A' || type == 'F') && size > side_offset) {
+        message[side_offset] = 'B';
+    }
+    return message;
+}
+
+// Whether the decoder accepts a message of `type` at `size`, as the book uses it or skips it, and
+// rejects one a byte shorter or longer if the book uses the type
+testing::AssertionResult decodes_at(char type, std::size_t size)
+{
+    const auto message = decode_itch(message_of(type, size));
+    if (!message) {
+        return testing::AssertionFailure() << describe(message.error());
+    }
+    const auto used = book_types.contains(type);
+    if (used == (message->kind == ItchKind::Skipped)) {
+        return testing::AssertionFailure() << (used ? "skipped" : "not skipped");
+    }
+    for (const auto wrong : {size - 1, size + 1}) {
+        const auto rejected = decode_itch(message_of(type, wrong));
+        const auto expected =
+            std::format("'{}' message has {} bytes, expected {}", type, wrong, size);
+        if (used && (rejected || describe(rejected.error()) != expected)) {
+            return testing::AssertionFailure() << "accepted or misreported " << wrong << " bytes";
+        }
+    }
+    return testing::AssertionSuccess();
+}
+
+TEST(ItchTest, DecodesEveryTypeOfTheSpecificationAtItsSize)
+{
+    for (const auto& [type, size] : specification) {
+        EXPECT_TRUE(decodes_at(type, size)) << "type " << type;
+    }
+}
+
+TEST(ItchTest, RejectsEveryTypeOutsideTheSpecification)
+{
+    for (unsigned byte = 0; byte <= std::numeric_limits<unsigned char>::max(); ++byte) {
+        const auto type = static_cast<char>(byte);
+        if (std::ranges::any_of(specification,
+                                [type](const auto& entry) { return entry.first == type; })) {
+            continue;
+        }
+        const auto rejected = decode_itch(message_of(type, 36));
+        ASSERT_FALSE(rejected) << "type byte " << byte;
+        EXPECT_EQ(describe(rejected.error()), std::format("unknown message type {:#04x}", byte));
+    }
+}
+
 TEST(ItchTest, PeeksTheLocateAndOrderReference)
 {
     using order_book::ItchPeek;
@@ -906,6 +972,199 @@ TEST(ItchReplayTest, ReplaysFeedLargerThanItsBuffers)
     std::string output;
     EXPECT_EQ(replay_itch(feed, output, 2), count);
     EXPECT_EQ(output, expected);
+}
+
+// A seeded native ITCH feed over a dozen locates, with the output and event count replay() must
+// give for it, worked out on MarketModel as each message is written, so that neither the CSV
+// encoder nor the decoder under test produces the expectation. It has adds with and without
+// attribution, executions with and without a price, cancels past what an order holds, deletes,
+// replacements, into the same reference number too, both trades, and every type the book skips.
+// Reference numbers repeat across locates and reach past the index's end and up to 2^64 - 1, and
+// a locate's later adds name another symbol, which must not change its ticker.
+class NativeFeed {
+public:
+    explicit NativeFeed(int messages)
+    {
+        for (int message = 0; message < messages; ++message) {
+            step();
+        }
+    }
+
+    [[nodiscard]] const std::string& feed() const { return m_feed; }
+    [[nodiscard]] const std::string& expected() const { return m_expected; }
+    [[nodiscard]] std::size_t events() const { return m_events; }
+
+private:
+    static constexpr std::uint16_t locates = 12;
+
+    void step()
+    {
+        ++m_time;
+        const auto locate = static_cast<std::uint16_t>(1 + (m_random() % locates));
+        const auto roll = m_random() % 20;
+        auto& live = m_live[locate];
+        if (roll == 0) {
+            const auto& [type, size] = specification.at(m_random() % specification.size());
+            if (!book_types.contains(type)) {
+                m_feed += itch::framed(message_of(type, size));
+            }
+            return;
+        }
+        if (roll == 1) {
+            write(locate, m_random() % 2 == 0
+                              ? itch::trade(locate, m_time, shares(), symbol(locate), price())
+                              : itch::cross(locate, m_time, shares(), symbol(locate), price()));
+            return;
+        }
+        if (live.empty() || roll < 9) {
+            add(locate);
+            return;
+        }
+        const auto index = m_random() % live.size();
+        const auto order = live[index];
+        const auto remaining = static_cast<Shares>(m_model.orders().at({locate, order}).remaining);
+        const auto taken = static_cast<Shares>(m_random() % (remaining + 11));
+        const auto before = m_model.bbo(locate);
+        if (roll <= 11) {
+            write(locate, roll == 11 ? itch::executed(locate, m_time, order, taken, price())
+                                     : itch::executed(locate, m_time, order, taken));
+            m_model.take(locate, order, std::min(taken, remaining));
+        }
+        else if (roll <= 13) {
+            write(locate, itch::cancel(locate, m_time, order, taken));
+            m_model.take(locate, order, std::min(taken, remaining));
+        }
+        else if (roll <= 15) {
+            write(locate, itch::remove(locate, m_time, order));
+            m_model.take(locate, order, remaining);
+        }
+        else {
+            replace(locate, order, remaining);
+        }
+        if (!m_model.live(locate, order)) {
+            std::erase(live, order);
+        }
+        changed(locate, before);
+    }
+
+    void add(std::uint16_t locate)
+    {
+        const auto order = reference(locate);
+        const auto side = m_random() % 2 == 0 ? 'B' : 'S';
+        const auto added_shares = shares();
+        const auto added_price = price();
+        const auto before = m_model.bbo(locate);
+        write(locate, itch::add(locate, m_time, order, side, added_shares, symbol(locate),
+                                added_price, m_random() % 3 == 0 ? "MPID" : ""));
+        m_model.add(locate, order, side == 'B' ? Side::Buy : Side::Sell, added_price, added_shares);
+        m_live[locate].push_back(order);
+        changed(locate, before);
+    }
+
+    // Replace `order`, which holds `remaining`, by a new reference number or, one time in eight, by
+    // its own
+    void replace(std::uint16_t locate, std::uint64_t order, Shares remaining)
+    {
+        const auto replacement = m_random() % 8 == 0 ? order : reference(locate);
+        const auto new_shares = shares();
+        const auto new_price = price();
+        const auto side = m_model.orders().at({locate, order}).side;
+        write(locate, itch::replace(locate, m_time, order, replacement, new_shares, new_price));
+        m_model.take(locate, order, remaining);
+        m_model.add(locate, replacement, side, new_price, new_shares);
+        if (replacement != order) {
+            m_live[locate].push_back(replacement);
+        }
+    }
+
+    // A reference number not live in `locate`: counting up, one live in another locate, or near
+    // the end of the index or of the 64-bit range
+    std::uint64_t reference(std::uint16_t locate)
+    {
+        while (true) {
+            std::uint64_t order = 0;
+            switch (m_random() % 8) {
+            case 0: {
+                const auto& other = m_live[1 + (m_random() % locates)];
+                order = other.empty() ? m_next++ : other[m_random() % other.size()];
+                break;
+            }
+            case 1:
+                order = (std::uint64_t{1} << 32U) - 64 + (m_random() % 128);
+                break;
+            case 2:
+                order = std::numeric_limits<std::uint64_t>::max() - (m_random() % 64);
+                break;
+            default:
+                order = m_next++;
+            }
+            if (!m_model.live(locate, order)) {
+                return order;
+            }
+        }
+    }
+
+    // The locate's own symbol, or another one once it has a ticker
+    std::string symbol(std::uint16_t locate)
+    {
+        auto own = std::format("L{}", locate);
+        auto& ticker = m_tickers[locate];
+        if (ticker.empty()) {
+            ticker = own;
+            return own;
+        }
+        return m_random() % 4 == 0 ? std::string("OTHER") : own;
+    }
+
+    Shares shares()
+    {
+        return static_cast<Shares>(m_random() % 25 == 0 ? 0 : 1 + (m_random() % 100));
+    }
+    Price price() { return static_cast<Price>(1000 + (m_random() % 10 * 10)); }
+
+    void write(std::uint16_t locate, const std::string& message)
+    {
+        static_cast<void>(locate);
+        m_feed += itch::framed(message);
+        ++m_events;
+    }
+
+    // Add the line replay() writes if the message just written moved the locate's BBO
+    void changed(std::uint16_t locate, const order_book::Bbo& before)
+    {
+        const auto after = m_model.bbo(locate);
+        if (after == before) {
+            return;
+        }
+        const auto side = [](const std::optional<Level>& level) {
+            return level ? std::format("{},{}", level->price, level->quantity) : std::string(",");
+        };
+        m_expected += std::format("{},{},{},{}\n", m_time, m_tickers.at(locate), side(after.bid),
+                                  side(after.ask));
+    }
+
+    // std::mt19937's output sequence is fixed by the standard, unlike the distributions
+    std::mt19937 m_random{11}; // NOLINT(bugprone-random-generator-seed)
+    MarketModel m_model;
+    std::map<std::uint16_t, std::vector<std::uint64_t>> m_live;
+    std::map<std::uint16_t, std::string> m_tickers;
+    std::uint64_t m_next = 1;
+    std::uint64_t m_time = 0;
+    std::string m_feed;
+    std::string m_expected;
+    std::size_t m_events = 0;
+};
+
+TEST(ItchReplayTest, MatchesModelOnASeededNativeFeed)
+{
+    const NativeFeed native(40'000);
+    EXPECT_GT(std::ranges::count(native.expected(), '\n'), 4'000);
+    for (const std::size_t threads : {1, 2, 3, 8}) {
+        std::string output;
+        EXPECT_EQ(replay_itch(native.feed(), output, threads), native.events())
+            << "threads " << threads;
+        EXPECT_EQ(output, native.expected()) << "threads " << threads;
+    }
 }
 
 } // namespace

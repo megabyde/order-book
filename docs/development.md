@@ -119,7 +119,10 @@ leaves it at the default `ON`, so `make debug`, `make release`, `make sanitize*`
   market, and `replay()` in both formats. Both books are also checked under seeded random churn
   against `MarketModel` in [`tests/market_model.hpp`](../tests/market_model.hpp), which keeps each
   level in a `std::map`. [`tests/itch_messages.hpp`](../tests/itch_messages.hpp) builds ITCH messages
-  field by field for them.
+  field by field for them. The ITCH decoder is checked against a copy of the specification's table
+  of message types and lengths, and a seeded native ITCH feed, with every type in it, is replayed on
+  1 to 8 workers against the output `MarketModel` predicts for it, so the ITCH path is tested without
+  the CSV encoder as well.
 - `AppTest.*` runs the application on each error path through
   [`tests/expect_error.cmake`](../tests/expect_error.cmake), which checks the exit status and the
   stderr message separately.
