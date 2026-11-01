@@ -113,7 +113,7 @@ The replay fuzzers' inputs stay within libFuzzer's length limit of a few KiB, so
 
 Tests are controlled by CMake's built-in `BUILD_TESTING` option from `include(CTest)`. This project
 leaves it at the default `ON`, so `make debug`, `make release`, `make sanitize*`, and
-`make coverage` all run the suite. It has four layers:
+`make coverage` all run the suite. It has five layers:
 
 - Unit tests in `tests/*_test.cpp` cover the CSV parser, the ITCH decoder, the CSV book, the ITCH
   market, and `replay()` in both formats. Both books are also checked under seeded random churn
@@ -123,6 +123,11 @@ leaves it at the default `ON`, so `make debug`, `make release`, `make sanitize*`
   of message types and lengths, and a seeded native ITCH feed, with every type in it, is replayed on
   1 to 8 workers against the output `MarketModel` predicts for it, so the ITCH path is tested without
   the CSV encoder as well.
+- `MetamorphicTest.*` replays seeded CSV and ITCH feeds transformed in ways that must not change
+  the output: reads cut anywhere from 1 byte to past a batch, renamed order IDs, CRLF line endings
+  and extra columns, ITCH reference numbers moved past the paged index or flipped toward 2^64 - 1,
+  and permuted locates; renamed tickers must rename them in the output. They need no model of the
+  output, only the replay of the original feed.
 - `AppTest.*` runs the application on each error path through
   [`tests/expect_error.cmake`](../tests/expect_error.cmake), which checks the exit status and the
   stderr message separately.
